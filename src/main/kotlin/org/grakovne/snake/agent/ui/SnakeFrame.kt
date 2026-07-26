@@ -17,9 +17,12 @@ import javax.swing.Timer
 
 /**
  * Pure show mode: the board, the score and a progress bar — nothing else.
- * The game thread publishes throttled snapshots; the EDT samples them at 60 fps,
- * so rendering stays smooth at any engine speed. Game state is communicated by
- * the bar color: accent while running, gold on a full board, red on death.
+ * Everything is drawn on one canvas, so the header is pixel-aligned to the
+ * board card: the score starts over its left edge, the percent ends over its
+ * right edge, the bar is exactly as wide as the board. Game state is
+ * communicated by the bar color: accent while running, gold on a full board,
+ * red on death. The game thread publishes throttled snapshots; the EDT
+ * samples them at 60 fps, so rendering stays smooth at any engine speed.
  */
 class SnakeFrame(private val fieldWidth: Int, private val fieldHeight: Int) {
 
@@ -36,7 +39,7 @@ class SnakeFrame(private val fieldWidth: Int, private val fieldHeight: Int) {
 
     private val area = fieldWidth * fieldHeight
 
-    private val header = object : JPanel() {
+    private val canvas = object : JPanel() {
         override fun paintComponent(g: Graphics) {
             super.paintComponent(g)
             val g2 = g as Graphics2D
@@ -45,24 +48,37 @@ class SnakeFrame(private val fieldWidth: Int, private val fieldHeight: Int) {
             g2.color = BG
             g2.fillRect(0, 0, width, height)
 
+            // shared geometry: board card first, header aligns to it
+            val availH = height - HEADER_H - MARGIN
+            val cell = minOf((width - 2 * MARGIN) / fieldWidth, availH / fieldHeight)
+                .coerceAtLeast(2)
+            val boardW = cell * fieldWidth
+            val boardH = cell * fieldHeight
+            val x0 = (width - boardW) / 2
+            val y0 = HEADER_H + (availH - boardH) / 2
+
+            paintHeader(g2, x0, boardW)
+            paintBoard(g2, x0, y0, cell, boardW, boardH)
+        }
+
+        private fun paintHeader(g2: Graphics2D, x0: Int, boardW: Int) {
             val snap = snapshot
             val score = snap?.score ?: 0
             val pct = score.toFloat() / area
-            val x = PAD
-            val w = width - 2 * PAD
 
             g2.font = NUM_BIG
             g2.color = TEXT
             val scoreStr = "%,d".format(score).replace(',', ' ')
-            g2.drawString(scoreStr, x, 44)
+            g2.drawString(scoreStr, x0, 46)
 
             g2.font = TEXT_SMALL
             g2.color = MUTED
-            val total = "/ %,d".format(area).replace(',', ' ')
-            g2.drawString(total, x + g2.getFontMetrics(NUM_BIG).stringWidth(scoreStr) + 10, 44)
-
+            g2.drawString(
+                "/ %,d".format(area).replace(',', ' '),
+                x0 + g2.getFontMetrics(NUM_BIG).stringWidth(scoreStr) + 10, 46,
+            )
             val pctStr = "%.1f%%".format(java.util.Locale.ROOT, pct * 100)
-            g2.drawString(pctStr, x + w - g2.fontMetrics.stringWidth(pctStr), 44)
+            g2.drawString(pctStr, x0 + boardW - g2.fontMetrics.stringWidth(pctStr), 46)
 
             val (from, to) = when (snap?.status) {
                 GameStatus.WON -> GOLD to GOLD_DEEP
@@ -70,27 +86,12 @@ class SnakeFrame(private val fieldWidth: Int, private val fieldHeight: Int) {
                 else -> ACCENT to ACCENT_DEEP
             }
             g2.color = TRACK
-            g2.fill(RoundRectangle2D.Float(x.toFloat(), 58f, w.toFloat(), 6f, 3f, 3f))
-            g2.paint = GradientPaint(x.toFloat(), 0f, from, (x + w).toFloat(), 0f, to)
-            g2.fill(RoundRectangle2D.Float(x.toFloat(), 58f, w * pct, 6f, 3f, 3f))
+            g2.fill(RoundRectangle2D.Float(x0.toFloat(), 60f, boardW.toFloat(), 6f, 3f, 3f))
+            g2.paint = GradientPaint(x0.toFloat(), 0f, from, (x0 + boardW).toFloat(), 0f, to)
+            g2.fill(RoundRectangle2D.Float(x0.toFloat(), 60f, boardW * pct, 6f, 3f, 3f))
         }
-    }
 
-    private val board = object : JPanel() {
-        override fun paintComponent(g: Graphics) {
-            super.paintComponent(g)
-            val g2 = g as Graphics2D
-            g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
-            g2.color = BG
-            g2.fillRect(0, 0, width, height)
-
-            val cell = minOf((width - 2 * PAD) / fieldWidth, (height - TOP_GAP - PAD) / fieldHeight)
-                .coerceAtLeast(2)
-            val boardW = cell * fieldWidth
-            val boardH = cell * fieldHeight
-            val x0 = (width - boardW) / 2
-            val y0 = TOP_GAP + (height - TOP_GAP - PAD - boardH) / 2
-
+        private fun paintBoard(g2: Graphics2D, x0: Int, y0: Int, cell: Int, boardW: Int, boardH: Int) {
             g2.color = CARD
             g2.fill(RoundRectangle2D.Float(
                 (x0 - 8).toFloat(), (y0 - 8).toFloat(),
@@ -110,15 +111,11 @@ class SnakeFrame(private val fieldWidth: Int, private val fieldHeight: Int) {
                     arc, arc,
                 )
             }
-            // (connector is defined on the class to keep this closure light)
 
-            // Segments are joined by small connectors so the body reads as one
-            // continuous creature instead of a string of beads.
             val n = snap.body.size
             for (i in n - 1 downTo 1) {
                 g2.color = bodyColor(i.toFloat() / n)
                 g2.fill(cellRect(snap.body[i]))
-                connector(g2, snap.body[i], snap.body[i - 1], x0, y0, cell, gap)
             }
             g2.color = HEAD
             g2.fill(cellRect(snap.body[0]))
@@ -139,19 +136,17 @@ class SnakeFrame(private val fieldWidth: Int, private val fieldHeight: Int) {
         frame.contentPane.background = BG
         frame.contentPane.layout = BorderLayout()
 
-        header.preferredSize = Dimension(0, 76)
-        board.preferredSize = Dimension(fieldWidth * 14 + 2 * PAD, fieldHeight * 14 + PAD)
-
-        frame.add(header, BorderLayout.NORTH)
-        frame.add(board, BorderLayout.CENTER)
-        frame.setSize(fieldWidth * 14 + 2 * PAD + 16, fieldHeight * 14 + PAD + 76 + 40)
+        canvas.background = BG
+        canvas.preferredSize = Dimension(
+            fieldWidth * 14 + 2 * MARGIN,
+            fieldHeight * 14 + HEADER_H + MARGIN,
+        )
+        frame.add(canvas, BorderLayout.CENTER)
+        frame.pack()
         frame.setLocationRelativeTo(null)
         frame.isVisible = true
 
-        Timer(16) {
-            header.repaint()
-            board.repaint()
-        }.start()
+        Timer(16) { canvas.repaint() }.start()
     }
 
     /** Called from the game thread; cheap and self-throttling. */
@@ -176,29 +171,15 @@ class SnakeFrame(private val fieldWidth: Int, private val fieldHeight: Int) {
     fun newGame(round: Long, strategy: String, seed: Long) = Unit
 
     private fun bodyColor(t: Float): Color {
-        // brightness floor keeps the tail clearly visible against the board
         val hue = 0.53f + 0.09f * t
-        val sat = 0.62f + 0.18f * t
-        val bri = 0.95f - 0.38f * t
+        val sat = 0.65f + 0.15f * t
+        val bri = 0.95f - 0.62f * t
         return Color.getHSBColor(hue, sat, bri)
     }
 
-    /** Fills the gap strip between two adjacent body cells (current fill color). */
-    private fun connector(g2: Graphics2D, a: Int, b: Int, x0: Int, y0: Int, cell: Int, gap: Int) {
-        if (gap == 0) return
-        val ax = x0 + (a % fieldWidth) * cell
-        val ay = y0 + (a / fieldWidth) * cell
-        val bx = x0 + (b % fieldWidth) * cell
-        val by = y0 + (b / fieldWidth) * cell
-        when {
-            ay == by -> g2.fillRect(minOf(ax, bx) + cell - gap, ay + gap, 2 * gap, cell - 2 * gap)
-            ax == bx -> g2.fillRect(ax + gap, minOf(ay, by) + cell - gap, cell - 2 * gap, 2 * gap)
-        }
-    }
-
     private companion object {
-        const val PAD = 24
-        const val TOP_GAP = 20
+        const val MARGIN = 32
+        const val HEADER_H = 92
 
         val BG = Color(0x0f1115)
         val CARD = Color(0x171a21)
