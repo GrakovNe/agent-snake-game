@@ -29,7 +29,10 @@ fun registerRun(name: String, mainClassName: String, description: String) =
         this.description = description
         mainClass.set(mainClassName)
         classpath = sourceSets["main"].runtimeClasspath
-        listOf("size", "games", "seed", "delay", "strategy", "parallelism").forEach { key ->
+        listOf(
+            "size", "games", "seed", "delay", "strategy", "parallelism",
+            "huntDump", "autopsy", "autopsyEvery",
+        ).forEach { key ->
             (project.findProperty(key) as? String)?.let { systemProperty(key, it) }
         }
     }

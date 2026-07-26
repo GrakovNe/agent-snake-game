@@ -27,9 +27,14 @@ fun main() {
         var firstHoleStep = -1
         var firstHoleScore = -1
         var firstHoleBoard = ""
+        val huntDumpEvery = intProp("huntDump", 0)
+        val autopsyFrames = intProp("autopsy", 0)
+        val autopsyEvery = intProp("autopsyEvery", 1)
+        val ring = ArrayDeque<String>()
+        val strategy = Strategies.create(strategyName, Random(gameSeed))
         val result = GameRunner.play(
             GameConfig(width = size, height = size, seed = gameSeed),
-            Strategies.create(strategyName, Random(gameSeed)),
+            strategy,
         ) { game ->
             lastGame = game
             if (firstHoleStep == -1 && game.score > game.width * game.height / 2 &&
@@ -39,10 +44,32 @@ fun main() {
                 firstHoleScore = game.score
                 firstHoleBoard = render(game)
             }
+            if (autopsyFrames > 0 && game.steps % autopsyEvery == 0) {
+                if (ring.size == autopsyFrames) ring.removeFirst()
+                ring.addLast(
+                    "step=${game.steps} score=${game.score} sinceFood=${game.stepsSinceFood}\n" +
+                        render(game)
+                )
+            }
+            if (huntDumpEvery > 0 && game.stepsSinceFood > 0 &&
+                game.stepsSinceFood % huntDumpEvery == 0 &&
+                game.score > game.width * game.height * 9 / 10
+            ) {
+                println("hunt: score=${game.score} sinceFood=${game.stepsSinceFood} steps=${game.steps}")
+                println(render(game))
+            }
         }
 
+        val counters = (strategy as? org.grakovne.snake.agent.strategy.SafeGreedyStrategy)?.let {
+            " timed=${it.timedCommits} chains=${it.escapeChains} " +
+                "midwalk=${it.midwalkInvalidations} desperate=${it.desperationEats}"
+        } ?: ""
+
         if (result.status == GameStatus.WON) {
-            println("seed=$gameSeed WON in ${result.steps} steps (first hole: step=$firstHoleStep score=$firstHoleScore)")
+            println(
+                "seed=$gameSeed WON in ${result.steps} steps " +
+                    "(first hole: step=$firstHoleStep score=$firstHoleScore)$counters"
+            )
             continue
         }
         lost++
@@ -50,12 +77,18 @@ fun main() {
         println(
             "seed=$gameSeed DEAD ${result.deathReason} score=${result.score}/${size * size} " +
                 "steps=${result.steps} sinceFood=${game.stepsSinceFood} " +
-                "firstHole: step=$firstHoleStep score=$firstHoleScore"
+                "firstHole: step=$firstHoleStep score=$firstHoleScore$counters"
         )
-        println("-- first hole board --")
-        println(firstHoleBoard)
-        println("-- terminal board --")
-        println(render(game))
+        if (autopsyFrames > 0) {
+            println("-- autopsy (${ring.size} frames) --")
+            ring.forEach(::println)
+        } else {
+            println("-- first hole board --")
+            println(firstHoleBoard)
+            println("-- terminal board --")
+            println(render(game))
+        }
+        ring.clear()
     }
     println("lost $lost of $games")
 }

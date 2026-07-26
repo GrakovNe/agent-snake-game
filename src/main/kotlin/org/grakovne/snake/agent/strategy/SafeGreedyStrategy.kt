@@ -6,20 +6,25 @@ import org.grakovne.snake.agent.core.Position
 import org.grakovne.snake.agent.strategy.search.BoardSearch
 
 /**
- * Tail-reachability greedy with constructive timed escapes.
+ * Tail-reachability greedy with a portfolio of eating walks.
  *
- * Move preference order:
- * 1. shortest path to food ([timeAware]: body cells count as passable once they vacate),
- *    accepted if after virtually eating either (a) the tail stays statically reachable, or
- *    (b) a concrete timed escape walk to the tail exists — this is what makes single-cell
- *    holes edible: enter, eat, and leave through a neighbor that vacates on schedule.
- *    Accepted plans are committed and followed verbatim; timings are exact in a
- *    deterministic engine, and mid-corridor replanning is what kills timed plans;
- * 2. stall along the (approximate) longest static path to the own tail — the acceptance
- *    check reruns every tick, so a periodic stall loop scans all timing phases;
- * 3. escape: committed timed walk to the tail;
- * 4. the legal move with the largest reachable area;
- * 5. desperation override: when the starvation budget runs low, take any path to food.
+ * The endgame observation driving the design: once the board is packed, stalling is a
+ * rigid zero-gap tail-chase that changes nothing — the trajectory loop reshapes only at
+ * the moment of eating. So the shape of the eating walk is where fragmentation of the
+ * free space is decided, and fragmented free cells are where later food strands and
+ * kills. Per food the bot therefore generates several candidate walks (shortest,
+ * wall-hugging, sweeping detour variants), filters them for safety and picks the one
+ * leaving the free space least fragmented.
+ *
+ * Safety of a candidate: after virtually eating, either the tail is statically reachable
+ * (a renewable invariant — the snake can stall indefinitely), or a concrete timed escape
+ * walk exists that itself ends statically safe. Timed reachability is never trusted as a
+ * survivability check on its own (the head cannot idle), only as a committed walk whose
+ * timings are exact in a deterministic engine.
+ *
+ * When no candidate is safe: stall along the longest static path to the own tail with
+ * chaotic per-tick reshaping, re-checking acceptance every tick; graded desperation near
+ * the starvation limit.
  */
 class SafeGreedyStrategy(
     private val timeAware: Boolean,
@@ -27,9 +32,22 @@ class SafeGreedyStrategy(
     private val hugging: Boolean = false,
     private val guardHoles: Boolean = false,
     private val random: kotlin.random.Random? = null,
+    private val sweepEndgame: Boolean = false,
 ) : Strategy {
 
-    private enum class Commitment { FOOD, ESCAPE }
+    private enum class Commitment { FOOD, ESCAPE, STALL }
+
+    private class Candidate(
+        val path: IntArray,
+        val postBody: IntArray,
+        val escapePlan: IntArray?,
+        val staticSafe: Boolean,
+        val components: Int,
+        val deadCells: Int,
+        val undigestible: Int,
+    ) {
+        val safe get() = staticSafe || escapePlan != null
+    }
 
     private var search: BoardSearch? = null
     private var committedPath: IntArray? = null
@@ -39,7 +57,12 @@ class SafeGreedyStrategy(
 
     var desperationEats = 0
         private set
-
+    var timedCommits = 0
+        private set
+    var escapeChains = 0
+        private set
+    var midwalkInvalidations = 0
+        private set
 
     override fun nextMove(game: GameView): Direction {
         val board = search?.takeIf { it.width == game.width && it.height == game.height }
@@ -51,73 +74,94 @@ class SafeGreedyStrategy(
     }
 
     private fun choose(game: GameView, board: BoardSearch): Direction {
-        commitStep(game, board)?.let { return it }
+        // Timed commitments (food walks, escapes) are followed unconditionally — their
+        // correctness depends on exact timing. A stall commitment yields to any accepted
+        // food plan below, so acceptance still re-runs every tick while stalling.
+        if (committedKind != Commitment.STALL) {
+            commitStep(game, board)?.let { return it }
+        }
 
-        val foodPath = board.shortestPathFromHead(
-            target = board.foodIndex(),
-            timeAware = timeAware,
-            margin = margin,
-            hugging = hugging,
-        )
+        val area = game.width * game.height
+        val freeCells = area - game.score
+        val endgame = freeCells <= maxOf(8, area / 20)
 
-        if (foodPath != null) {
-            val postBody = board.bodyAfterEating(game.snake, foodPath)
-            val remainingBudget = game.starvationLimit - game.stepsSinceFood
-            // Graded desperation: first lift the hole guard, only near the very end of the
-            // starvation budget accept plans with no static safety at all. With <= 2 free
-            // cells there is nothing left to protect — eating is worth it even if it traps.
-            val freeCellsNow = game.width * game.height - game.score
-            val desperate = remainingBudget < foodPath.size + 2 * (game.width + game.height)
-            // With <= 2 free cells left, hunt for a timed window for half the budget, then
-            // eat even if it traps: area-1 with certainty beats starving for the full area.
-            val lastResort = remainingBudget < foodPath.size + 8 ||
-                (freeCellsNow <= 2 && game.stepsSinceFood > game.starvationLimit / 2)
-
-            // Holes are cheaper to avoid than to eat: reject plans that strand a free cell
-            // with no free neighbors (unless the board already had it, or time presses).
-            val holeSafe = !guardHoles || desperate ||
-                board.deadFreeCellsFor(postBody) <= board.deadFreeCells()
-
+        val candidates = buildCandidates(game, board, endgame)
+        if (candidates.isNotEmpty()) {
             // Eating the last free cell wins on the spot: no exit needed.
-            if (postBody.size == game.width * game.height) {
+            candidates.firstOrNull { it.postBody.size == area }?.let {
                 pendingEscape = null
-                return commit(board, foodPath, Commitment.FOOD)
+                return commit(board, it.path, Commitment.FOOD)
             }
 
-            if (holeSafe && board.tailReachableFor(postBody, timeAware = false)) {
-                pendingEscape = null
-                return commit(board, foodPath, Commitment.FOOD)
+            val shortest = candidates.minOf { it.path.size }
+            val remainingBudget = game.starvationLimit - game.stepsSinceFood
+            val desperate = remainingBudget < shortest + 2 * (game.width + game.height)
+            val lastResort = remainingBudget < shortest + 8 ||
+                (freeCells <= 2 && game.stepsSinceFood > game.starvationLimit / 2)
+
+            val deadNow = board.deadFreeCells()
+            val undigestibleNow = if (endgame) board.undigestibleHolesNow() else 0
+            // Fragmentation ranking only matters where the trajectory loop is rigid; in the
+            // open midgame it just displaces the better-shaped hugging path.
+            val ranked = if (endgame) {
+                candidates.sortedWith(
+                    compareBy({ it.undigestible }, { it.components }, { it.deadCells }, { it.path.size })
+                )
+            } else {
+                candidates
             }
 
-            // No static safety after eating: look for a concrete timed escape walk that
-            // itself ends in a statically-safe state. This is what makes single-cell
-            // holes edible: enter, eat, leave through a neighbor that vacates on schedule.
-            // Endgame-only: timed chains are brittle against food respawning on the walk,
-            // and before the board is packed static acceptance is all we need.
-            val freeCells = game.width * game.height - game.score
-            val endgame = freeCells <= maxOf(8, game.width * game.height / 20)
-            val escapePlan = if (endgame) board.escapePlanFor(postBody, timeAware = true) else null
-            if (escapePlan != null && escapePlan.size > 1) {
-                val postEscape = board.bodyAfterWalk(postBody, escapePlan)
-                if (board.tailReachableFor(postEscape, timeAware = false)) {
-                    pendingEscape = escapePlan
-                    return commit(board, foodPath, Commitment.FOOD)
-                }
+            fun guarded(candidate: Candidate): Boolean =
+                !guardHoles || desperate ||
+                    if (endgame) {
+                        // Rigid-loop phase: after this eat the snake settles into the
+                        // postBody loop; the number of future food spawns that would be
+                        // inedible under that loop's schedule must not grow.
+                        candidate.undigestible <= undigestibleNow
+                    } else {
+                        candidate.deadCells <= deadNow
+                    }
+
+            // Statically-safe walks first; a timed walk (escape-verified) only when no
+            // static candidate survives — timed eats rewire the loop more aggressively
+            // and must not displace static ones in the ranking.
+            val accepted = ranked.firstOrNull { it.staticSafe && guarded(it) }
+                ?: ranked.firstOrNull { it.safe && guarded(it) }
+            if (accepted != null) {
+                if (!accepted.staticSafe) timedCommits++
+                pendingEscape = if (accepted.staticSafe) null else accepted.escapePlan
+                return commit(board, accepted.path, Commitment.FOOD)
             }
 
             if (lastResort) {
                 desperationEats++
-                pendingEscape = escapePlan
-                return commit(board, foodPath, Commitment.FOOD)
+                val best = ranked.firstOrNull { it.safe } ?: ranked.first()
+                pendingEscape = if (best.staticSafe) null else best.escapePlan
+                return commit(board, best.path, Commitment.FOOD)
             }
         }
 
-        // Chaotic per-tick reshaping of the stall trajectory explores vacate-schedule space
-        // fastest and lets timed windows onto stranded holes align (measured better than
-        // both a fixed shape and per-lap coherent variation).
-        val stallPath = board.longestPathToTail(directionBias = random?.nextInt(4) ?: 0)
+        // No acceptable food plan: stall. Two regimes with opposite needs:
+        // - midgame (open space): commit to the stall walk — chains of first steps from
+        //   different plans do not compose into a valid path, and that replanning drift
+        //   is what walks into dead-end pockets;
+        // - endgame (rigid corridor): replan chaotically per tick — there is nothing to
+        //   drift into, and reshaping the trajectory explores vacate schedules.
+        if (!endgame && committedKind == Commitment.STALL) {
+            commitStep(game, board)?.let { return it }
+        }
+
+        val stallPath = board.longestPathToTail(
+            directionBias = random?.nextInt(4) ?: 0,
+            avoidAroundFood = true,
+        )
         if (stallPath != null && stallPath.size > 1) {
-            return holeGuarded(game, board, step(board, stallPath[0], stallPath[1]))
+            val planned = step(board, stallPath[0], stallPath[1])
+            val choice = holeGuarded(game, board, planned)
+            if (!endgame && choice == planned) {
+                return commit(board, stallPath, Commitment.STALL)
+            }
+            return choice
         }
 
         val escapePath = board.escapePlanFor(bodyIndices(game, board), timeAware = true)
@@ -127,6 +171,68 @@ class SafeGreedyStrategy(
         }
 
         return fallback(game, board, game.heading)
+    }
+
+    private fun buildCandidates(game: GameView, board: BoardSearch, endgame: Boolean): List<Candidate> {
+        val paths = ArrayList<IntArray>(6)
+        board.shortestPathFromHead(
+            target = board.foodIndex(),
+            timeAware = timeAware,
+            margin = margin,
+            hugging = hugging,
+        )?.let { paths.add(it) }
+        if (endgame) {
+            if (hugging) {
+                board.shortestPathFromHead(
+                    target = board.foodIndex(),
+                    timeAware = timeAware,
+                    margin = margin,
+                    hugging = false,
+                )?.let { paths.add(it) }
+            }
+            if (sweepEndgame) {
+                for (bias in 0 until 4) {
+                    board.longestPathToFood(directionBias = bias)?.let { paths.add(it) }
+                }
+            }
+            // In the rigid zero-gap endgame loop there are NO statically free cells: the
+            // only route to food is the corridor of vacating tail cells. The timed path is
+            // the one candidate that can see it; acceptance still demands a statically-safe
+            // or escape-verified post-eat state.
+            if (!timeAware) {
+                board.shortestPathFromHead(
+                    target = board.foodIndex(),
+                    timeAware = true,
+                    margin = 0,
+                )?.let { paths.add(it) }
+            }
+        }
+
+        return paths.mapNotNull { path -> evaluate(game, board, path, endgame) }
+    }
+
+    private fun evaluate(game: GameView, board: BoardSearch, path: IntArray, endgame: Boolean): Candidate? {
+        if (path.size < 2) return null
+        val postBody = board.bodyAfterEating(game.snake, path)
+        val staticSafe = board.tailReachableFor(postBody, timeAware = false)
+        var escapePlan: IntArray? = null
+        if (!staticSafe && endgame) {
+            val plan = board.escapePlanFor(postBody, timeAware = true, avoidFree = true)
+            if (plan != null && plan.size > 1 &&
+                board.tailReachableFor(board.bodyAfterWalk(postBody, plan), timeAware = false)
+            ) {
+                escapePlan = plan
+            }
+        }
+        return Candidate(
+            path = path,
+            postBody = postBody,
+            escapePlan = escapePlan,
+            staticSafe = staticSafe,
+            components = board.freeComponentsFor(postBody),
+            deadCells = board.deadFreeCellsFor(postBody),
+            undigestible = if (endgame) board.undigestibleHoles(postBody) else 0,
+        )
     }
 
     /**
@@ -140,6 +246,9 @@ class SafeGreedyStrategy(
         val body = bodyIndices(game, board)
         return game.legalMoves()
             .filter { it != choice && !board.moveCreatesDeadCell(board.index(game.head + it)) }
+            // never step onto the food outside an accepted plan: an accidental bite
+            // bypasses every safety check
+            .filter { board.index(game.head + it) != board.foodIndex() }
             .filter {
                 val walk = intArrayOf(board.headIndex(), board.index(game.head + it))
                 board.tailReachableFor(board.bodyAfterWalk(body, walk), timeAware = false)
@@ -165,6 +274,7 @@ class SafeGreedyStrategy(
             board.headIndex() == path.last()
         ) {
             path = pendingEscape ?: return null.also { committedPath = null }
+            escapeChains++
             committedPath = path
             committedPos = 0
             committedKind = Commitment.ESCAPE
@@ -175,10 +285,11 @@ class SafeGreedyStrategy(
         val valid = next != -1 &&
             path[committedPos] == board.headIndex() &&
             (committedKind != Commitment.FOOD || board.foodIndex() == path.last()) &&
-            // an unplanned food on an escape route would break the walk's timing
-            (committedKind != Commitment.ESCAPE || next != board.foodIndex()) &&
+            // an unplanned bite on a stall/escape route bypasses every safety check
+            (committedKind == Commitment.FOOD || next != board.foodIndex()) &&
             isCurrentlyEnterable(game, board, next)
         if (!valid) {
+            if (committedPos < path.size - 1) midwalkInvalidations++
             committedPath = null
             return null
         }
@@ -201,7 +312,25 @@ class SafeGreedyStrategy(
         committedPath = null
         val legal = game.legalMoves()
         if (legal.isEmpty()) return previousChoice
-        return legal.maxBy { board.floodSizeFrom(board.index(game.head + it)) }
+        // Survival first: prefer moves after which the tail stays statically reachable,
+        // then moves that do not bite the food by accident (an unplanned eat bypasses
+        // every safety check), then the largest reachable area.
+        val body = bodyIndices(game, board)
+        return legal.maxWith(
+            compareBy(
+                { move ->
+                    val target = board.index(game.head + move)
+                    val post = if (target == board.foodIndex()) {
+                        board.bodyAfterEating(game.snake, intArrayOf(board.headIndex(), target))
+                    } else {
+                        board.bodyAfterWalk(body, intArrayOf(board.headIndex(), target))
+                    }
+                    if (board.tailReachableFor(post, timeAware = false)) 1 else 0
+                },
+                { move -> if (board.index(game.head + move) != board.foodIndex()) 1 else 0 },
+                { move -> board.floodSizeFrom(board.index(game.head + move)) },
+            )
+        )
     }
 
     private fun step(board: BoardSearch, from: Int, to: Int): Direction =

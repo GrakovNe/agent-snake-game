@@ -14,7 +14,7 @@ fun interface Strategy {
 }
 
 object Strategies {
-    val names = listOf("greedy", "random", "safe", "safetime", "hug", "band")
+    val names = listOf("greedy", "random", "safe", "safetime", "hug", "band", "sweep")
 
     fun create(name: String, random: Random = Random.Default): Strategy = when (name) {
         "greedy" -> GreedyStrategy()
@@ -23,6 +23,9 @@ object Strategies {
         "safetime" -> SafeGreedyStrategy(timeAware = true)
         "hug" -> SafeGreedyStrategy(timeAware = false, hugging = true)
         "band" -> SafeGreedyStrategy(timeAware = false, hugging = true, guardHoles = true, random = random)
+        "sweep" -> SafeGreedyStrategy(
+            timeAware = false, hugging = true, guardHoles = true, random = random, sweepEndgame = true,
+        )
         else -> error("unknown strategy '$name', available: $names")
     }
 }

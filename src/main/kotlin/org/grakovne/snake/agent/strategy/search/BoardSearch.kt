@@ -123,6 +123,139 @@ class BoardSearch(val width: Int, val height: Int) {
     }
 
     /**
+     * Schedule-aware digestibility of every isolated free cell under the rigid loop the
+     * snake settles into after eating ([postBody] as the loop order). A hole C is edible
+     * later iff it has body neighbors n_i (entry, passed by the head exactly when it
+     * vacates) and n_j (exit) with (b_i + 2 - b_j) mod L < gap, where b = steps until the
+     * cell vacates, L = loop length and gap = number of free cells (the width of the
+     * vacated window trailing the tail). Cells in free clusters have slack and pass.
+     * Guarding eats with this keeps every possible future food spawn edible.
+     */
+    fun undigestibleHoles(body: IntArray): Int {
+        val loop = body.size
+        val gap = size - loop
+        if (gap <= 1) return 0
+        java.util.Arrays.fill(scratchVacate, 0)
+        for (i in body.indices) {
+            scratchVacate[body[i]] = body.size - i
+        }
+        val bodyNeighbors = IntArray(4)
+        var undigestible = 0
+        cells@ for (cell in 0 until size) {
+            if (scratchVacate[cell] != 0) continue
+            var bodies = 0
+            for (direction in 0 until 4) {
+                val next = neighbor(cell, direction)
+                if (next == -1) continue
+                val b = scratchVacate[next]
+                if (b == 0) continue@cells   // part of a free cluster: has slack
+                bodyNeighbors[bodies++] = b
+            }
+            if (bodies < 2) {
+                undigestible++
+                continue
+            }
+            for (i in 0 until bodies) {
+                for (j in 0 until bodies) {
+                    if (i == j) continue
+                    if ((bodyNeighbors[i] + 2 - bodyNeighbors[j]).mod(loop) < gap) continue@cells
+                }
+            }
+            undigestible++
+        }
+        return undigestible
+    }
+
+    /** [undigestibleHoles] of the currently loaded board (body order rebuilt from vacate times). */
+    fun undigestibleHolesNow(): Int {
+        val result = IntArray(bodyLength)
+        for (cell in 0 until size) {
+            val v = vacate[cell]
+            if (v != 0) result[bodyLength - v] = cell
+        }
+        return undigestibleHoles(result)
+    }
+
+    /**
+     * True when every newly stranded dead cell of [postBody] is digestible: its body
+     * neighbors were laid within [maxGap] steps of each other, so when the tail sweeps
+     * past them they all vacate together, the hole joins the corridor for a long window
+     * and the regular acceptance check picks the food up. Holes bordered by far-apart
+     * trajectory segments never open — those are the ones worth rejecting.
+     */
+    fun newStrandsDigestible(postBody: IntArray, maxGap: Int = 10): Boolean {
+        java.util.Arrays.fill(scratchVacate, 0)
+        for (i in postBody.indices) {
+            scratchVacate[postBody[i]] = i + 1  // body index + 1, head = 1
+        }
+        for (cell in 0 until size) {
+            if (scratchVacate[cell] != 0) continue
+            var minIndex = Int.MAX_VALUE
+            var maxIndex = Int.MIN_VALUE
+            var freeNeighbors = 0
+            for (direction in 0 until 4) {
+                val next = neighbor(cell, direction)
+                if (next == -1) continue
+                val bodyIndex = scratchVacate[next]
+                if (bodyIndex == 0) {
+                    freeNeighbors++
+                } else {
+                    if (bodyIndex < minIndex) minIndex = bodyIndex
+                    if (bodyIndex > maxIndex) maxIndex = bodyIndex
+                }
+            }
+            if (freeNeighbors > 0) continue          // not dead
+            if (isDeadNow(cell)) continue            // pre-existing strand, not this walk's fault
+            if (maxIndex - minIndex > maxGap) return false
+        }
+        return true
+    }
+
+    private fun isDeadNow(cell: Int): Boolean {
+        if (vacate[cell] != 0) return false
+        for (direction in 0 until 4) {
+            val next = neighbor(cell, direction)
+            if (next != -1 && vacate[next] == 0) return false
+        }
+        return true
+    }
+
+    /** Number of connected components of free cells for the given body (head-first indices). */
+    fun freeComponentsFor(body: IntArray): Int {
+        java.util.Arrays.fill(scratchVacate, 0)
+        for (i in body.indices) {
+            scratchVacate[body[i]] = body.size - i
+        }
+        return countComponents(scratchVacate)
+    }
+
+    /** Number of connected components of free cells on the currently loaded board. */
+    fun freeComponents(): Int = countComponents(vacate)
+
+    private fun countComponents(occupancy: IntArray): Int {
+        java.util.Arrays.fill(dist, -1)
+        var components = 0
+        for (start in 0 until size) {
+            if (occupancy[start] != 0 || dist[start] != -1) continue
+            components++
+            dist[start] = 0
+            queue[0] = start
+            var head = 0
+            var tail = 1
+            while (head < tail) {
+                val current = queue[head++]
+                for (direction in 0 until 4) {
+                    val next = neighbor(current, direction)
+                    if (next == -1 || dist[next] != -1 || occupancy[next] != 0) continue
+                    dist[next] = 0
+                    queue[tail++] = next
+                }
+            }
+        }
+        return components
+    }
+
+    /**
      * Free cells with no free neighbor for the given body (head-first indices) — future
      * unreachable holes unless consumed. The food cell counts as free.
      */
@@ -207,14 +340,27 @@ class BoardSearch(val width: Int, val height: Int) {
      * is sound as long as it is followed verbatim and nothing is eaten en route: the walk
      * never revisits its own new body (BFS paths are simple) and old-body timings are exact.
      */
-    fun escapePlanFor(body: IntArray, timeAware: Boolean, margin: Int = 0): IntArray? {
+    /**
+     * [avoidFree]: route only through vacating body cells, never across currently-free
+     * cells. Free cells are exactly where the next food can spawn, and a spawn on a
+     * committed timed walk breaks it — a corridor-only escape cannot be broken that way.
+     */
+    fun escapePlanFor(
+        body: IntArray,
+        timeAware: Boolean,
+        margin: Int = 0,
+        avoidFree: Boolean = false,
+    ): IntArray? {
         java.util.Arrays.fill(scratchVacate, 0)
         for (i in body.indices) {
             scratchVacate[body[i]] = body.size - i
         }
+        // blockFood: an unplanned bite during a timed walk shifts every later vacate time
+        // and breaks the plan, so escapes route around the food by construction.
         return bfs(
             scratchVacate, body.first(), body.last(),
-            timeAware, margin, blockFood = false, targetWalkable = true,
+            timeAware, margin, blockFood = true, targetWalkable = true,
+            blockFree = avoidFree,
         )
     }
 
@@ -229,19 +375,67 @@ class BoardSearch(val width: Int, val height: Int) {
      * timed windows onto stranded holes eventually align — a fixed order stalls in an
      * identical loop forever.
      */
-    fun longestPathToTail(directionBias: Int = 0): IntArray? {
+    /**
+     * [avoidAroundFood]: soft-block the cells around the food while stalling, so that
+     * vacated hole neighbors stay free instead of being re-laid by the stall trajectory —
+     * once two of them are free at once, the food acceptance check fires. Falls back to
+     * an unrestricted stall when the restricted one finds no path.
+     */
+    fun longestPathToTail(directionBias: Int = 0, avoidAroundFood: Boolean = false): IntArray? {
+        if (avoidAroundFood) {
+            markAvoidedAroundFood()
+            val restricted = bfs(
+                vacate, headIdx, tailIdx,
+                timeAware = false, margin = 0, blockFood = true, targetWalkable = true,
+                avoid = avoided,
+            )
+            if (restricted != null) return extend(restricted, directionBias, blockFood = true, avoid = avoided)
+        }
         val base = bfs(
             vacate, headIdx, tailIdx,
             timeAware = false, margin = 0, blockFood = true, targetWalkable = true,
         ) ?: return null
+        return extend(base, directionBias, blockFood = true)
+    }
 
+    private val avoided = BooleanArray(size)
+
+    private fun markAvoidedAroundFood() {
+        java.util.Arrays.fill(avoided, false)
+        for (direction in 0 until 4) {
+            val next = neighbor(foodIdx, direction)
+            if (next != -1) avoided[next] = true
+        }
+    }
+
+    /**
+     * Longest-path variant of the food route: the shortest path stretched with detours to
+     * sweep free cells on the way. Used in the endgame, where eating along a sweeping route
+     * consumes would-be holes instead of stranding them.
+     */
+    fun longestPathToFood(directionBias: Int = 0): IntArray? {
+        val base = bfs(
+            vacate, headIdx, foodIdx,
+            timeAware = false, margin = 0, blockFood = false, targetWalkable = false,
+        ) ?: return null
+        return extend(base, directionBias, blockFood = false)
+    }
+
+    /** Stretches [base] by pulling free 2-cell detours into it until no extension fits. */
+    private fun extend(
+        base: IntArray,
+        directionBias: Int,
+        blockFood: Boolean,
+        avoid: BooleanArray? = null,
+    ): IntArray {
         val path = ArrayList<Int>(base.size)
         base.forEach { path.add(it) }
         java.util.Arrays.fill(onPath, false)
         path.forEach { onPath[it] = true }
 
         fun extendable(cell: Int): Boolean =
-            cell != -1 && !onPath[cell] && vacate[cell] == 0 && cell != foodIdx
+            cell != -1 && !onPath[cell] && vacate[cell] == 0 &&
+                (!blockFood || cell != foodIdx) && (avoid == null || !avoid[cell])
 
         var i = 0
         while (i < path.size - 1) {
@@ -299,6 +493,8 @@ class BoardSearch(val width: Int, val height: Int) {
         margin: Int,
         blockFood: Boolean,
         targetWalkable: Boolean,
+        avoid: BooleanArray? = null,
+        blockFree: Boolean = false,
     ): IntArray? {
         java.util.Arrays.fill(dist, -1)
         dist[from] = 0
@@ -314,9 +510,10 @@ class BoardSearch(val width: Int, val height: Int) {
                 val next = neighbor(current, direction)
                 if (next == -1 || dist[next] != -1) continue
                 if (blockFood && next == foodIdx) continue
+                if (avoid != null && avoid[next] && next != target) continue
                 val passable = when {
                     next == target && targetWalkable -> true
-                    occupancy[next] == 0 -> true
+                    occupancy[next] == 0 -> !blockFree
                     timeAware -> occupancy[next] + margin <= arrival
                     else -> false
                 }

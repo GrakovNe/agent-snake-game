@@ -14,7 +14,7 @@ import kotlin.random.Random
 fun main() {
     val size = intProp("size", 40)
     val delay = longProp("delay", 20)
-    val strategyName = prop("strategy", "greedy")
+    val strategyName = prop("strategy", "sweep")
     val baseSeed = longProp("seed", System.currentTimeMillis())
 
     val ui = SnakeFrame(size, size)
