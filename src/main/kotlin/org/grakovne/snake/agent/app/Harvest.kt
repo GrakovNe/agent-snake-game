@@ -104,5 +104,6 @@ fun main() {
             )
         )
     }
+    File("$outPath.done").writeText("$written\n")
     println("done: $written samples in $outPath")
 }
