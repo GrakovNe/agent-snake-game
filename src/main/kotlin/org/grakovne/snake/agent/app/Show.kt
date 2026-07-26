@@ -16,7 +16,9 @@ import kotlin.random.Random
 fun main() {
     val size = intProp("size", 40)
     val tps = intProp("tps", 2500)
-    val defaultStrategy = if (File("data/value-net.onnx").exists()) "neural" else "sweep"
+    val hasNet = File("data/value-net.onnx").exists() ||
+        object {}.javaClass.getResource("/value-net.onnx") != null
+    val defaultStrategy = if (hasNet) "neural" else "sweep"
     val strategyName = prop("strategy", defaultStrategy)
     val baseSeed = longProp("seed", System.currentTimeMillis())
 

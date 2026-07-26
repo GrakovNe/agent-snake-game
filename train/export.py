@@ -25,4 +25,13 @@ torch.onnx.export(
     dynamic_axes={"planes": {0: "batch", 2: "h", 3: "w"}, "deficit": {0: "batch"}},
     opset_version=17,
 )
-print(f"exported {dst} (input Bx4xHxW dynamic, output = predicted deficit / 32)")
+
+# repack to a single self-contained file (weights inside, no .data sidecar) —
+# required for classpath/jar loading
+import os
+import onnx
+model = onnx.load(dst)
+onnx.save_model(model, dst, save_as_external_data=False)
+if os.path.exists(dst + ".data"):
+    os.remove(dst + ".data")
+print(f"exported {dst} (single file, input Bx4xHxW dynamic, output = deficit / 32)")

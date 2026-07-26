@@ -14,7 +14,16 @@ import java.nio.FloatBuffer
 class ValueNet(modelPath: String, private val width: Int, private val height: Int) : AutoCloseable {
 
     private val env: OrtEnvironment = OrtEnvironment.getEnvironment()
-    private val session: OrtSession = env.createSession(modelPath, OrtSession.SessionOptions())
+    private val session: OrtSession = createSession(modelPath)
+
+    /** File path first; falls back to the model embedded in the jar (classpath root). */
+    private fun createSession(modelPath: String): OrtSession {
+        val file = java.io.File(modelPath)
+        if (file.exists()) return env.createSession(file.absolutePath, OrtSession.SessionOptions())
+        val resource = javaClass.getResourceAsStream("/value-net.onnx")
+            ?: error("value net not found: neither $modelPath nor embedded /value-net.onnx")
+        return env.createSession(resource.readBytes(), OrtSession.SessionOptions())
+    }
     private val planes = FloatArray(4 * width * height)
 
     /** Predicted deficit in cells (lower = better) for a head-first body cell list. */

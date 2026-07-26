@@ -85,3 +85,17 @@ registerRun(
     "org.grakovne.snake.agent.app.ArenaMainKt",
     "Parallel multi-strategy leaderboard on a shared seed set: ./gradlew arena -Pgames=100"
 )
+
+tasks.register<Jar>("fatJar") {
+    group = "snake"
+    description = "Self-contained webshow jar: java -jar snake-webshow.jar (-Dport=8080 -Dsize=40 ...)"
+    archiveBaseName.set("snake-webshow")
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+    manifest { attributes["Main-Class"] = "org.grakovne.snake.agent.app.WebShowKt" }
+    from(sourceSets["main"].output)
+    from(configurations.runtimeClasspath.get().map { if (it.isDirectory) it else zipTree(it) })
+    if (file("data/value-net.onnx").exists()) {
+        from("data/value-net.onnx")
+    }
+    exclude("META-INF/*.SF", "META-INF/*.DSA", "META-INF/*.RSA")
+}
