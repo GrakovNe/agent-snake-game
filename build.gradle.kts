@@ -11,7 +11,6 @@ repositories {
 
 dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2")
-    implementation("org.jfree:jfreechart:1.5.5")
     implementation("com.microsoft.onnxruntime:onnxruntime:1.20.0")
     testImplementation(kotlin("test"))
 }
@@ -31,7 +30,7 @@ fun registerRun(name: String, mainClassName: String, description: String) =
         mainClass.set(mainClassName)
         classpath = sourceSets["main"].runtimeClasspath
         listOf(
-            "size", "games", "seed", "delay", "strategy", "parallelism",
+            "size", "games", "seed", "delay", "tps", "strategy", "parallelism",
             "huntDump", "autopsy", "autopsyEvery", "undig",
             "rolloutFree", "rolloutCount", "rngSpread",
             "episodeSeeds", "episodeRollouts", "episodeFree",
