@@ -19,6 +19,28 @@ object Rollouts {
     )
 
     /**
+     * Policies for self-play and labeling:
+     * champion — the tuned heuristic bot;
+     * neural   — champion + net-driven episode search (the ExIt teacher);
+     * netstall — champion + value-guided stalling only (cheap improved rollouts).
+     */
+    fun policyFor(name: String, seed: Long): SafeGreedyStrategy {
+        val knobs = when (name) {
+            "neural" -> championKnobs.copy(
+                episodeSeeds = 4, episodeFree = 40, valueNetPath = "data/value-net.onnx",
+            )
+            "netstall" -> championKnobs.copy(
+                valueNetPath = "data/value-net.onnx", valueStall = true,
+            )
+            else -> championKnobs
+        }
+        return SafeGreedyStrategy(
+            timeAware = false, guardHoles = true,
+            random = Random(seed), knobs = knobs,
+        )
+    }
+
+    /**
      * Final score of one championship-policy playout from the given body state.
      * [starvationBudget] caps hunts inside the rollout: a reduced budget makes labels
      * uniformly slightly pessimistic but dramatically cheaper on big boards.
@@ -29,6 +51,7 @@ object Rollouts {
         body: List<Position>,
         seed: Long,
         starvationBudget: Int = width * height * 2,
+        policyName: String = "champion",
     ): Int {
         val game = SnakeGame(
             GameConfig(
@@ -37,12 +60,7 @@ object Rollouts {
             ),
             initialBody = body,
         )
-        val policy = SafeGreedyStrategy(
-            timeAware = false,
-            guardHoles = true,
-            random = Random(seed),
-            knobs = championKnobs,
-        )
+        val policy = policyFor(policyName, seed)
         while (game.status == GameStatus.RUNNING) {
             game.step(policy.nextMove(game))
         }

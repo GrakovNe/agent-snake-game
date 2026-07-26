@@ -12,4 +12,5 @@ echo "$(date -Is) babysit: relaunching harvest $SIZE/$GAMES/$SEEDFROM" >> harves
 nohup nice -n 5 ./gradlew -q harvest \
   -Psize="$SIZE" -Pgames="$GAMES" -PseedFrom="$SEEDFROM" -Prollouts="$ROLLOUTS" -Pout="$OUT" \
   -PstarveDiv="${STARVEDIV:-1}" -PeveryNth="${EVERYNTH:-1}" \
+  -Pphase1Policy="${P1POLICY:-champion}" -ProlloutPolicy="${RPOLICY:-champion}" \
   >> harvest.log 2>&1 &

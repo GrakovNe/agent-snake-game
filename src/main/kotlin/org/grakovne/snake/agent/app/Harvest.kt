@@ -8,7 +8,6 @@ import org.grakovne.snake.agent.core.GameConfig
 import org.grakovne.snake.agent.core.Position
 import org.grakovne.snake.agent.sim.Arena
 import org.grakovne.snake.agent.sim.Rollouts
-import org.grakovne.snake.agent.strategy.SafeGreedyStrategy
 import java.io.File
 import kotlin.random.Random
 
@@ -32,12 +31,15 @@ fun main() {
     val rollouts = intProp("rollouts", 32)
     val starveDiv = intProp("starveDiv", 1)      // rollout starvation budget = 2*area/starveDiv
     val everyNth = intProp("everyNth", 1)        // keep every N-th harvested state
+    val phase1Policy = prop("phase1Policy", "champion")
+    val rolloutPolicy = prop("rolloutPolicy", "champion")
     val parallelism = intProp("parallelism", Runtime.getRuntime().availableProcessors())
     val outPath = prop("out", "data/planes-$size-seed$seedFrom.txt")
 
     println(
         "harvest: field=${size}x$size games=$games seedFrom=$seedFrom rollouts=$rollouts " +
-            "starveDiv=$starveDiv everyNth=$everyNth -> $outPath"
+            "starveDiv=$starveDiv everyNth=$everyNth " +
+            "phase1=$phase1Policy rollouts-by=$rolloutPolicy -> $outPath"
     )
 
     // Phase 1: play games, dump endgame post-eat states.
@@ -50,12 +52,8 @@ fun main() {
     ) { index ->
         val states = ArrayList<IntArray>()
         perGame[index] = states
-        SafeGreedyStrategy(
-            timeAware = false,
-            guardHoles = true,
-            random = Random(seedFrom + index),
-            knobs = Rollouts.championKnobs,
-        ).also { it.stateObserver = { state -> states.add(state) } }
+        Rollouts.policyFor(phase1Policy, seedFrom + index)
+            .also { it.stateObserver = { state -> states.add(state) } }
     }
     val states = perGame.filterNotNull().flatten()
         .filterIndexed { index, _ -> index % everyNth == 0 }
@@ -89,6 +87,7 @@ fun main() {
                             size, size, body,
                             seedFrom * 1_000_003 + (base + offset) * 977L + r,
                             starvationBudget = size * size * 2 / starveDiv,
+                            policyName = rolloutPolicy,
                         )
                     }
                     total / rollouts

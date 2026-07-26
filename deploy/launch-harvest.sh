@@ -12,6 +12,8 @@ ROLLOUTS=$4
 OUT=$5
 STARVEDIV=${6:-1}
 EVERYNTH=${7:-1}
+P1POLICY=${8:-champion}
+RPOLICY=${9:-champion}
 EOF
 rm -f "$5.done"
 ./deploy/vm-babysit.sh
