@@ -94,7 +94,7 @@ class SnakeFrame(private val fieldWidth: Int, private val fieldHeight: Int) {
 
         private fun paintFooter(g2: Graphics2D) {
             g2.font = FOOTER_TITLE
-            g2.color = TEXT
+            g2.color = MUTED
             var text = "AI Snake"
             g2.drawString(text, (width - g2.fontMetrics.stringWidth(text)) / 2, height - 26)
             g2.font = FOOTER_SUB
