@@ -50,8 +50,8 @@ def to_planes(rows):
         x[i, 1] = (body.reshape(h, w) == 0).astype(np.float32)
         x[i, 2].reshape(-1)[cells[0]] = 1.0
         x[i, 3] = length / area
-        # label: normalize the deficit — predict (area - final score) squashed
-        y[i] = (area - label) / 32.0
+        # label: deficit normalized by board side (comparable scale across sizes)
+        y[i] = (area - label) / (2.0 * w)
     return x, y, w, h
 
 
@@ -106,14 +106,14 @@ def main():
             "xt": xt, "yt": yt,
             "val": order[:val_n], "train": order[val_n:],
         }
-        print(f"{len(group)} samples {w}x{h}; deficit mean={32 * y.mean():.2f} std={32 * y.std():.2f}")
+        print(f"{len(group)} samples {w}x{h}; deficit mean={2 * w * y.mean():.2f} std={2 * w * y.std():.2f}")
 
     net = ValueNet().to(device)
     opt = torch.optim.AdamW(net.parameters(), lr=args.lr)
     loss_fn = nn.SmoothL1Loss()
     print(f"device={device}")
     for (w, h), s in sizes.items():
-        base = float(((s["yt"][s["val"]] - s["yt"][s["train"]].mean()) ** 2).mean().sqrt()) * 32
+        base = float(((s["yt"][s["val"]] - s["yt"][s["train"]].mean()) ** 2).mean().sqrt()) * 2 * w
         print(f"  {w}x{h}: val baseline RMSE (predict mean) = {base:.2f} cells")
 
     for epoch in range(args.epochs):
@@ -140,7 +140,7 @@ def main():
             for (w, h), s in sizes.items():
                 pred = net(s["xt"][s["val"]].to(device))
                 yv = s["yt"][s["val"]].to(device)
-                rmse = float(((pred - yv) ** 2).mean().sqrt()) * 32
+                rmse = float(((pred - yv) ** 2).mean().sqrt()) * 2 * w
                 corr = float(np.corrcoef(pred.cpu().numpy(), yv.cpu().numpy())[0, 1])
                 report.append(f"{w}x{h}: RMSE {rmse:.2f} corr {corr:.3f}")
         print(f"epoch {epoch + 1:3d}  train {total / len(batches):.4f}  " + "  ".join(report))

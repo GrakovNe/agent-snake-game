@@ -75,6 +75,8 @@ data class SafeGreedyKnobs(
     val episodeFree: Int = 0,
     /** ONNX value net path: replaces continuation rollouts in the episode search */
     val valueNetPath: String? = null,
+    /** the net also picks the stall-lap shape (instead of a random bias) */
+    val valueStall: Boolean = false,
 )
 
 class SafeGreedyStrategy(
@@ -133,6 +135,8 @@ class SafeGreedyStrategy(
     private var huntExhausted = false
     private var lastHuntStep = -1000
     private var lastFood: Position? = null
+    private var cachedStallBias = 0
+    private var lastBiasEvalStep = -1000
 
     override fun nextMove(game: GameView): Direction {
         val board = search?.takeIf { it.width == game.width && it.height == game.height }
@@ -326,8 +330,22 @@ class SafeGreedyStrategy(
 
         val chaosHere = knobs.chaosStall &&
             (if (endgame) knobs.chaosEndgame else knobs.chaosMidgame)
+        // Value-guided stalling: the outcome variance lives in these lap-shape coin
+        // flips (measured 885..900 on a fixed seed) — let the net judge the four
+        // shapes by the state each full lap would leave, instead of rolling a die.
+        val stallBias = if (knobs.valueStall && knobs.valueNetPath != null && endgame) {
+            if (game.steps - lastBiasEvalStep >= 16) {
+                lastBiasEvalStep = game.steps
+                cachedStallBias = bestStallBias(game, board) ?: (random?.nextInt(4) ?: 0)
+            }
+            cachedStallBias
+        } else if (chaosHere) {
+            random?.nextInt(4) ?: 0
+        } else {
+            0
+        }
         val stallPath = board.longestPathToTail(
-            directionBias = if (chaosHere) random?.nextInt(4) ?: 0 else 0,
+            directionBias = stallBias,
             avoidAroundFood = knobs.avoidAroundFood,
         )
         if (stallPath != null && stallPath.size > 1) {
@@ -438,6 +456,30 @@ class SafeGreedyStrategy(
             total += rollout.score
         }
         return total / seeds.size
+    }
+
+    /** Picks the stall bias whose full-lap walk leaves the lowest predicted deficit. */
+    private fun bestStallBias(game: GameView, board: BoardSearch): Int? {
+        val netPath = knobs.valueNetPath ?: return null
+        val net = org.grakovne.snake.agent.strategy.value.ValueNet.sharedFor(
+            netPath, game.width, game.height,
+        )
+        val body = bodyIndices(game, board)
+        var best: Int? = null
+        var bestDeficit = Double.MAX_VALUE
+        for (bias in 0 until 4) {
+            val path = board.longestPathToTail(
+                directionBias = bias, avoidAroundFood = knobs.avoidAroundFood,
+            ) ?: continue
+            if (path.size < 2) continue
+            val after = board.bodyAfterWalk(body, path)
+            val deficit = net.predictDeficit(after)
+            if (deficit < bestDeficit) {
+                bestDeficit = deficit
+                best = bias
+            }
+        }
+        return best
     }
 
     /** Mean final score of real-engine rollouts from the candidate's post-eat state. */

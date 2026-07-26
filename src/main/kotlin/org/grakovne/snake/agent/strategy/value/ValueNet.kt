@@ -9,7 +9,7 @@ import java.nio.FloatBuffer
  * ONNX value network: predicts the expected endgame deficit (area - final score) of a
  * loop state. Input planes mirror train/train.py exactly:
  *   0: vacate time normalized by body length, 1: free mask, 2: head one-hot, 3: fill.
- * Output is deficit / 32.
+ * Output is deficit / (2 * side) — the per-size normalization of the trainer.
  */
 class ValueNet(modelPath: String, private val width: Int, private val height: Int) : AutoCloseable {
 
@@ -54,7 +54,7 @@ class ValueNet(modelPath: String, private val width: Int, private val height: In
                     }
                     else -> out as Float
                 }
-                return value * 32.0
+                return value * 2.0 * width
             }
         }
     }
