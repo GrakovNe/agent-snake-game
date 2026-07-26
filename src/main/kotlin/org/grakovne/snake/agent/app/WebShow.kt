@@ -20,12 +20,18 @@ fun main() {
     val strategyName = prop("strategy", defaultStrategy)
     val baseSeed = longProp("seed", System.currentTimeMillis())
 
-    val server = WebShowServer(port, size, size)
+    val server = WebShowServer(
+        port, size, size,
+        strategyName = strategyName,
+        adminToken = System.getProperty("adminToken"),
+    )
     val area = size * size
     var round = 0L
 
     while (true) {
         val seed = baseSeed + round
+        server.newGame(round, seed)
+        val gameStart = System.currentTimeMillis()
         val result = GameRunner.play(
             config = GameConfig(width = size, height = size, seed = seed),
             strategy = Strategies.create(strategyName, Random(seed)),
@@ -37,6 +43,7 @@ fun main() {
             val sleepEvery = maxOf(1, effectiveTps / 1000)
             if (effectiveTps < 1_000_000 && game.steps % sleepEvery == 0) Thread.sleep(1)
         }
+        server.gameFinished(round, result, System.currentTimeMillis() - gameStart)
         println("round $round: $result")
         round++
         Thread.sleep(2_500)

@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AI Snake · admin</title>
+<style>
+  :root {
+    --bg: #0f1115; --card: #171a21; --track: #232833;
+    --text: #e5e7eb; --muted: #8b93a3; --accent: #38bdf8;
+    --ok: #34d399; --gold: #eab308; --bad: #f87171;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: var(--bg); color: var(--text);
+    font-family: "Helvetica Neue", -apple-system, sans-serif;
+    padding: 28px; max-width: 880px; margin: 0 auto;
+  }
+  h1 { font-size: 16px; font-weight: 700; margin-bottom: 18px; }
+  h1 span { color: var(--muted); font-weight: 400; }
+  .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; }
+  .c {
+    background: var(--card); border-radius: 12px; padding: 12px 14px;
+  }
+  .c .k { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; }
+  .c .v { font-size: 20px; font-weight: 700; margin-top: 4px; font-variant-numeric: tabular-nums; }
+  .c .v small { font-size: 12px; color: var(--muted); font-weight: 400; }
+  h2 { font-size: 12px; color: var(--muted); text-transform: uppercase;
+       letter-spacing: .5px; margin: 22px 0 8px; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th { text-align: left; color: var(--muted); font-weight: 400; font-size: 11px;
+       text-transform: uppercase; letter-spacing: .5px; padding: 6px 8px; }
+  td { padding: 6px 8px; border-top: 1px solid var(--track);
+       font-variant-numeric: tabular-nums; }
+  td.num, th.num { text-align: right; }
+  .won { color: var(--gold); } .dead { color: var(--bad); } .full { color: var(--ok); }
+</style>
+</head>
+<body>
+<h1>AI Snake <span>· server admin</span></h1>
+<div class="cards" id="cards"></div>
+<h2>Recent games</h2>
+<table>
+  <thead><tr>
+    <th>#</th><th class="num">seed</th><th class="num">score</th>
+    <th class="num">steps</th><th class="num">duration</th><th>outcome</th>
+  </tr></thead>
+  <tbody id="rows"></tbody>
+</table>
+
+<script>
+const token = new URLSearchParams(location.search).get('token');
+const url = '/admin/stats' + (token ? '?token=' + token : '');
+
+const fmt = n => Number(n).toLocaleString('ru');
+const dur = ms => ms >= 60000
+  ? Math.floor(ms / 60000) + 'm ' + Math.round(ms % 60000 / 1000) + 's'
+  : (ms / 1000).toFixed(1) + 's';
+const up = s => s >= 3600
+  ? Math.floor(s / 3600) + 'h ' + Math.floor(s % 3600 / 60) + 'm'
+  : Math.floor(s / 60) + 'm ' + (s % 60) + 's';
+
+async function tick() {
+  try {
+    const d = await (await fetch(url)).json();
+    const area = d.size.split('x').reduce((a, b) => a * b, 1);
+    const deaths = Object.entries(d.deaths).map(([k, v]) => `${k} ${v}`).join(' · ') || '—';
+    document.getElementById('cards').innerHTML = [
+      ['viewers', fmt(d.viewers)],
+      ['uptime', up(d.uptimeSec)],
+      ['board · bot', `${d.size} <small>${d.strategy}</small>`],
+      ['engine', `${fmt(d.stepsPerSec)} <small>st/s</small>`],
+      ['game', `#${fmt(d.round + 1)} <small>seed ${d.seed}</small>`],
+      ['finished games', fmt(d.games)],
+      ['full boards', `${fmt(d.wins)} <small>+ ${fmt(d.onTarget - d.wins)} at −1</small>`],
+      ['mean / max', `${fmt(d.meanScore)} <small>/ ${fmt(d.maxScore)}</small>`],
+      ['deaths', `<small>${deaths}</small>`],
+    ].map(([k, v]) => `<div class="c"><div class="k">${k}</div><div class="v">${v}</div></div>`).join('');
+
+    document.getElementById('rows').innerHTML = d.recent.map(g => {
+      const cls = g.status === 'WON' ? 'won' : (g.score >= area - 1 ? 'full' : 'dead');
+      const outcome = g.status === 'WON' ? 'BOARD FULL'
+        : (g.reason || g.status) + (g.score >= area - 1 ? ' · at −1' : '');
+      return `<tr>
+        <td>#${g.round + 1}</td><td class="num">${g.seed}</td>
+        <td class="num">${fmt(g.score)}</td><td class="num">${fmt(g.steps)}</td>
+        <td class="num">${dur(g.durMs)}</td><td class="${cls}">${outcome}</td>
+      </tr>`;
+    }).join('');
+  } catch (e) { /* server restarting; keep polling */ }
+}
+tick();
+setInterval(tick, 2000);
+</script>
+</body>
+</html>

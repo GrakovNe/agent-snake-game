@@ -30,7 +30,7 @@ fun registerRun(name: String, mainClassName: String, description: String) =
         mainClass.set(mainClassName)
         classpath = sourceSets["main"].runtimeClasspath
         listOf(
-            "size", "games", "seed", "delay", "tps", "port", "strategy", "parallelism",
+            "size", "games", "seed", "delay", "tps", "port", "adminToken", "strategy", "parallelism",
             "huntDump", "autopsy", "autopsyEvery", "undig",
             "rolloutFree", "rolloutCount", "rngSpread",
             "episodeSeeds", "episodeRollouts", "episodeFree",
