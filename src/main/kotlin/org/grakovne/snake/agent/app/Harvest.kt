@@ -58,35 +58,51 @@ fun main() {
             .format((System.nanoTime() - startedAt) / 1e9)
     )
 
-    // Phase 2: label states by rollout means, in parallel.
-    val labelStart = System.nanoTime()
-    val labels = runBlocking {
-        states.mapIndexed { index, state ->
-            async(Dispatchers.Default) {
-                val body = state.map { Position(it % size, it / size) }
-                var total = 0.0
-                repeat(rollouts) { r ->
-                    total += Rollouts.playOut(size, size, body, seedFrom * 1_000_003 + index * 977L + r)
-                }
-                total / rollouts
-            }
-        }.awaitAll()
-    }
-    println(
-        "phase 2: labeled in %.1fs (%.2f rollouts/s)".format(
-            (System.nanoTime() - labelStart) / 1e9,
-            states.size.toDouble() * rollouts / ((System.nanoTime() - labelStart) / 1e9),
-        )
-    )
-
+    // Phase 2: label states by rollout means, in parallel, appending in chunks — a
+    // preempted VM or a killed process loses at most one chunk, and a rerun with the
+    // same seedFrom resumes from the already-written line count (states are
+    // deterministic given the seed range).
     val out = File(outPath)
     out.parentFile?.mkdirs()
-    out.bufferedWriter().use { writer ->
-        states.forEachIndexed { index, state ->
-            writer.write("%.3f $size $size ".format(java.util.Locale.ROOT, labels[index]))
-            writer.write(state.joinToString(" "))
-            writer.write("\n")
+    val alreadyDone = if (out.exists()) out.readLines().count { it.isNotBlank() } else 0
+    if (alreadyDone > 0) println("resuming: $alreadyDone samples already labeled")
+
+    val labelStart = System.nanoTime()
+    var written = alreadyDone
+    val chunkSize = 512
+    while (written < states.size) {
+        val chunk = states.subList(written, minOf(written + chunkSize, states.size))
+        val base = written
+        val labels = runBlocking {
+            chunk.mapIndexed { offset, state ->
+                async(Dispatchers.Default) {
+                    val body = state.map { Position(it % size, it / size) }
+                    var total = 0.0
+                    repeat(rollouts) { r ->
+                        total += Rollouts.playOut(
+                            size, size, body,
+                            seedFrom * 1_000_003 + (base + offset) * 977L + r,
+                        )
+                    }
+                    total / rollouts
+                }
+            }.awaitAll()
         }
+        java.io.FileWriter(out, true).buffered().use { writer ->
+            chunk.forEachIndexed { offset, state ->
+                writer.write("%.3f $size $size ".format(java.util.Locale.ROOT, labels[offset]))
+                writer.write(state.joinToString(" "))
+                writer.write("\n")
+            }
+        }
+        written += chunk.size
+        println(
+            "labeled %d/%d (%.0f rollouts/s)".format(
+                written, states.size,
+                (written - alreadyDone).toDouble() * rollouts /
+                    ((System.nanoTime() - labelStart) / 1e9),
+            )
+        )
     }
-    println("wrote ${states.size} samples to $outPath")
+    println("done: $written samples in $outPath")
 }
