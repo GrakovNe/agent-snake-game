@@ -27,6 +27,9 @@ fun main() {
     val elapsedSeconds = (System.nanoTime() - startedAt) / 1e9
 
     println(evaluation.summary())
+    val target = size * size - 1
+    val onTarget = evaluation.results.count { it.score >= target }
+    println("target (score >= $target): $onTarget/$games")
     println(
         "time: %.2fs (%.1f games/s, %.0f steps/s)".format(
             elapsedSeconds,

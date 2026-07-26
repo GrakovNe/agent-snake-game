@@ -30,8 +30,9 @@ class SnakeGame(val config: GameConfig) : GameView {
 
     var deathReason: DeathReason? = null
         private set
-    var stepsSinceFood: Int = 0
+    override var stepsSinceFood: Int = 0
         private set
+    override val starvationLimit: Int = config.maxStepsWithoutFood
 
     init {
         val headX = width / 2

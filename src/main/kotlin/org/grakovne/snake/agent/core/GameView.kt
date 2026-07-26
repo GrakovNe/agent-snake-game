@@ -16,6 +16,10 @@ interface GameView {
     val steps: Int
     val status: GameStatus
 
+    /** Steps since the last food; at [starvationLimit] the snake dies of starvation. */
+    val stepsSinceFood: Int
+    val starvationLimit: Int
+
     val head: Position get() = snake.first()
 
     fun contains(position: Position): Boolean =

@@ -45,6 +45,11 @@ registerRun(
     "Headless benchmark: ./gradlew benchmark -Psize=30 -Pgames=200 -Pseed=42 -Pstrategy=greedy"
 )
 registerRun(
+    "probe",
+    "org.grakovne.snake.agent.app.ProbeKt",
+    "Dump terminal boards of lost games: ./gradlew probe -Psize=15 -Pgames=30 -Pstrategy=safe"
+)
+registerRun(
     "arena",
     "org.grakovne.snake.agent.app.ArenaMainKt",
     "Parallel multi-strategy leaderboard on a shared seed set: ./gradlew arena -Pgames=100"

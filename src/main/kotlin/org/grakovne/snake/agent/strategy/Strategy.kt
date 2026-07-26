@@ -14,11 +14,15 @@ fun interface Strategy {
 }
 
 object Strategies {
-    val names = listOf("greedy", "random")
+    val names = listOf("greedy", "random", "safe", "safetime", "hug", "band")
 
     fun create(name: String, random: Random = Random.Default): Strategy = when (name) {
         "greedy" -> GreedyStrategy()
         "random" -> RandomStrategy(random)
+        "safe" -> SafeGreedyStrategy(timeAware = false)
+        "safetime" -> SafeGreedyStrategy(timeAware = true)
+        "hug" -> SafeGreedyStrategy(timeAware = false, hugging = true)
+        "band" -> SafeGreedyStrategy(timeAware = false, hugging = true, guardHoles = true, random = random)
         else -> error("unknown strategy '$name', available: $names")
     }
 }
