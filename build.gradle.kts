@@ -30,7 +30,7 @@ fun registerRun(name: String, mainClassName: String, description: String) =
         mainClass.set(mainClassName)
         classpath = sourceSets["main"].runtimeClasspath
         listOf(
-            "size", "games", "seed", "delay", "tps", "strategy", "parallelism",
+            "size", "games", "seed", "delay", "tps", "port", "strategy", "parallelism",
             "huntDump", "autopsy", "autopsyEvery", "undig",
             "rolloutFree", "rolloutCount", "rngSpread",
             "episodeSeeds", "episodeRollouts", "episodeFree",
@@ -44,6 +44,11 @@ registerRun(
     "show",
     "org.grakovne.snake.agent.app.ShowKt",
     "Watch a strategy play with the Swing UI: ./gradlew show -Psize=40 -Pdelay=20 -Pstrategy=greedy"
+)
+registerRun(
+    "webshow",
+    "org.grakovne.snake.agent.app.WebShowKt",
+    "Broadcast the show to browsers: ./gradlew webshow -Pport=8080 -Psize=40 -Ptps=2500"
 )
 registerRun(
     "benchmark",

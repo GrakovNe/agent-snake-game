@@ -1,0 +1,149 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AI Snake</title>
+<style>
+  :root {
+    --bg: #0f1115; --card: #171a21; --track: #232833;
+    --text: #e5e7eb; --muted: #8b93a3;
+    --accent: #38bdf8; --accent-deep: #2563eb;
+    --gold: #eab308; --gold-deep: #ca8a04;
+    --bad: #f87171; --bad-deep: #dc2626;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    background: var(--bg); color: var(--text);
+    font-family: "Helvetica Neue", -apple-system, sans-serif;
+    display: flex; flex-direction: column; align-items: center;
+    min-height: 100%;
+  }
+  .wrap {
+    display: flex; flex-direction: column;
+    height: 100%; padding: 24px 0 12px;
+  }
+  .header { margin-bottom: 14px; }
+  .scoreline { display: flex; align-items: baseline; }
+  .score { font-size: 34px; font-weight: 700; letter-spacing: .5px; }
+  .total { font-size: 13px; color: var(--muted); margin-left: 10px; }
+  .pct { font-size: 13px; color: var(--muted); margin-left: auto; }
+  .bar {
+    margin-top: 10px; height: 6px; border-radius: 3px;
+    background: var(--track); overflow: hidden;
+  }
+  .bar > div {
+    height: 100%; width: 0; border-radius: 3px;
+    background: linear-gradient(90deg, var(--accent), var(--accent-deep));
+    transition: width .12s linear;
+  }
+  .bar.won > div { background: linear-gradient(90deg, var(--gold), var(--gold-deep)); }
+  .bar.dead > div { background: linear-gradient(90deg, var(--bad), var(--bad-deep)); }
+  .boardcard {
+    background: var(--card); border-radius: 18px; padding: 8px;
+    flex: 1; display: flex; align-items: center; justify-content: center;
+    min-height: 0;
+  }
+  canvas { display: block; }
+  .footer { text-align: center; margin-top: 14px; color: var(--muted); }
+  .footer .t { font-size: 13px; font-weight: 700; }
+  .footer .s { font-size: 11px; margin-top: 2px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="header">
+    <div class="scoreline">
+      <span class="score" id="score">0</span>
+      <span class="total" id="total">/ 0</span>
+      <span class="pct" id="pct">0.0%</span>
+    </div>
+    <div class="bar" id="bar"><div id="fill"></div></div>
+  </div>
+  <div class="boardcard"><canvas id="board"></canvas></div>
+  <div class="footer">
+    <div class="t">AI Snake</div>
+    <div class="s">Max Grakov with Fable 5</div>
+  </div>
+</div>
+
+<script>
+const canvas = document.getElementById('board');
+const ctx = canvas.getContext('2d');
+let frame = null;
+
+function hsv(h, s, v) {
+  const i = Math.floor(h * 6), f = h * 6 - i;
+  const p = v * (1 - s), q = v * (1 - f * s), t = v * (1 - (1 - f) * s);
+  const [r, g, b] = [[v,t,p],[q,v,p],[p,v,t],[p,q,v],[t,p,v],[v,p,q]][i % 6];
+  return `rgb(${r*255|0},${g*255|0},${b*255|0})`;
+}
+const bodyColor = t => hsv(0.53 + 0.09 * t, 0.65 + 0.15 * t, 0.95 - 0.62 * t);
+
+function rr(x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.roundRect(x, y, w, h, r);
+  ctx.fill();
+}
+
+function draw() {
+  requestAnimationFrame(draw);
+  if (!frame) return;
+  const { w, h, b, f, st } = frame;
+
+  const card = canvas.parentElement;
+  const availW = card.clientWidth - 16, availH = card.clientHeight - 16;
+  const cell = Math.max(2, Math.floor(Math.min(availW / w, availH / h)));
+  const bw = cell * w, bh = cell * h;
+  const dpr = window.devicePixelRatio || 1;
+  if (canvas.width !== bw * dpr || canvas.height !== bh * dpr) {
+    canvas.width = bw * dpr; canvas.height = bh * dpr;
+    canvas.style.width = bw + 'px'; canvas.style.height = bh + 'px';
+  }
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, bw, bh);
+
+  const inset = Math.max(1, Math.floor(cell * 0.16));
+  const inner = cell - 2 * inset;
+  const arc = Math.min(8, inner * 0.6);
+  const px = i => (i % w) * cell, py = i => Math.floor(i / w) * cell;
+
+  const n = b.length;
+  for (let i = n - 1; i >= 1; i--) {
+    ctx.fillStyle = bodyColor(i / n);
+    rr(px(b[i]) + inset, py(b[i]) + inset, inner, inner, arc);
+    // bridge to the next segment
+    const a = b[i], c = b[i - 1];
+    if (py(a) === py(c)) {
+      ctx.fillRect(Math.min(px(a), px(c)) + cell - inset - 1, py(a) + inset, 2 * inset + 2, inner);
+    } else {
+      ctx.fillRect(px(a) + inset, Math.min(py(a), py(c)) + cell - inset - 1, inner, 2 * inset + 2);
+    }
+  }
+  ctx.fillStyle = '#e0f2fe';
+  rr(px(b[0]) + inset, py(b[0]) + inset, inner, inner, arc);
+
+  if (st === 'RUNNING') {
+    ctx.fillStyle = 'rgba(251,146,60,0.2)';
+    rr(px(f) + inset - 3, py(f) + inset - 3, inner + 6, inner + 6, arc + 3);
+    ctx.fillStyle = '#fb923c';
+    rr(px(f) + inset, py(f) + inset, inner, inner, arc);
+  }
+
+  // header
+  const area = w * h, s = frame.s;
+  document.getElementById('score').textContent = s.toLocaleString('ru');
+  document.getElementById('total').textContent = '/ ' + area.toLocaleString('ru');
+  document.getElementById('pct').textContent = (100 * s / area).toFixed(1) + '%';
+  document.getElementById('fill').style.width = (100 * s / area) + '%';
+  document.getElementById('bar').className =
+    'bar' + (st === 'WON' ? ' won' : st === 'DEAD' ? ' dead' : '');
+  document.querySelector('.wrap').style.width = bw + 'px';
+}
+
+new EventSource('/events').onmessage = e => { frame = JSON.parse(e.data); };
+requestAnimationFrame(draw);
+</script>
+</body>
+</html>
