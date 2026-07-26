@@ -132,6 +132,11 @@ class SafeGreedyStrategy(
     /** Data-collection hook: raw post-eat body (head-first cell indices) in the endgame. */
     var stateObserver: ((postBody: IntArray) -> Unit)? = null
 
+    /** Data-collection hook: post-eat body at fill thresholds (decidedness studies). */
+    var bucketObserver: ((postBody: IntArray) -> Unit)? = null
+    private var nextBucket = 0
+    private val buckets = intArrayOf(70, 80, 85, 90, 93, 95, 97, 99)
+
     private var huntExhausted = false
     private var lastHuntStep = -1000
     private var lastFood: Position? = null
@@ -273,6 +278,13 @@ class SafeGreedyStrategy(
                     observer(features)
                 }
                 stateObserver?.takeIf { endgame }?.let { it(accepted.postBody.copyOf()) }
+                bucketObserver?.let { observer ->
+                    val fillPct = 100 * accepted.postBody.size / area
+                    while (nextBucket < buckets.size && fillPct >= buckets[nextBucket]) {
+                        observer(accepted.postBody.copyOf())
+                        nextBucket++
+                    }
+                }
                 pendingEscape = if (accepted.staticSafe) null else accepted.escapePlan
                 return commit(board, accepted.path, Commitment.FOOD)
             }

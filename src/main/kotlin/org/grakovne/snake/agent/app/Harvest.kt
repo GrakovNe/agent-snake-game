@@ -33,6 +33,7 @@ fun main() {
     val everyNth = intProp("everyNth", 1)        // keep every N-th harvested state
     val phase1Policy = prop("phase1Policy", "champion")
     val rolloutPolicy = prop("rolloutPolicy", "champion")
+    val mode = prop("mode", "endgame")           // endgame | buckets (fill thresholds)
     val parallelism = intProp("parallelism", Runtime.getRuntime().availableProcessors())
     val outPath = prop("out", "data/planes-$size-seed$seedFrom.txt")
 
@@ -52,8 +53,13 @@ fun main() {
     ) { index ->
         val states = ArrayList<IntArray>()
         perGame[index] = states
-        Rollouts.policyFor(phase1Policy, seedFrom + index)
-            .also { it.stateObserver = { state -> states.add(state) } }
+        Rollouts.policyFor(phase1Policy, seedFrom + index).also {
+            if (mode == "buckets") {
+                it.bucketObserver = { state -> states.add(state) }
+            } else {
+                it.stateObserver = { state -> states.add(state) }
+            }
+        }
     }
     val states = perGame.filterNotNull().flatten()
         .filterIndexed { index, _ -> index % everyNth == 0 }
@@ -81,22 +87,26 @@ fun main() {
             chunk.mapIndexed { offset, state ->
                 async(Dispatchers.Default) {
                     val body = state.map { Position(it % size, it / size) }
-                    var total = 0.0
-                    repeat(rollouts) { r ->
-                        total += Rollouts.playOut(
+                    val scores = DoubleArray(rollouts) { r ->
+                        Rollouts.playOut(
                             size, size, body,
                             seedFrom * 1_000_003 + (base + offset) * 977L + r,
                             starvationBudget = size * size * 2 / starveDiv,
                             policyName = rolloutPolicy,
-                        )
+                        ).toDouble()
                     }
-                    total / rollouts
+                    val mean = scores.average()
+                    val std = kotlin.math.sqrt(scores.sumOf { (it - mean) * (it - mean) } / rollouts)
+                    mean to std
                 }
             }.awaitAll()
         }
         java.io.FileWriter(out, true).buffered().use { writer ->
             chunk.forEachIndexed { offset, state ->
-                writer.write("%.3f $size $size ".format(java.util.Locale.ROOT, labels[offset]))
+                val (mean, std) = labels[offset]
+                writer.write(
+                    "%.3f %.3f $size $size ".format(java.util.Locale.ROOT, mean, std)
+                )
                 writer.write(state.joinToString(" "))
                 writer.write("\n")
             }
