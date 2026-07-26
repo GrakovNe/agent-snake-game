@@ -21,7 +21,7 @@ fun main() {
     val baseSeed = longProp("seed", System.currentTimeMillis())
 
     val ui = SnakeFrame(size, size)
-    val sleepEvery = maxOf(1, tps / 1000)
+    val area = size * size
     var round = 0L
 
     while (true) {
@@ -32,7 +32,12 @@ fun main() {
             strategy = Strategies.create(strategyName, Random(seed)),
         ) { game ->
             ui.render(game)
-            if (tps < 1_000_000 && game.steps % sleepEvery == 0) Thread.sleep(1)
+            // Finale slow-motion: over the last 50 cells the tick rate eases down,
+            // so the hardest part of the game is watchable.
+            val free = area - game.score
+            val effectiveTps = if (free > 50) tps else maxOf(250, tps * free / 50)
+            val sleepEvery = maxOf(1, effectiveTps / 1000)
+            if (effectiveTps < 1_000_000 && game.steps % sleepEvery == 0) Thread.sleep(1)
         }
         println("round $round: $result")
         round++

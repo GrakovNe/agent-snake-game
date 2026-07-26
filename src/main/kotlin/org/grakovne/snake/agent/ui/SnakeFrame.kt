@@ -84,12 +84,12 @@ class SnakeFrame(private val fieldWidth: Int, private val fieldHeight: Int) {
             g2.color = BG
             g2.fillRect(0, 0, width, height)
 
-            val cell = minOf((width - 2 * PAD) / fieldWidth, (height - PAD) / fieldHeight)
+            val cell = minOf((width - 2 * PAD) / fieldWidth, (height - TOP_GAP - PAD) / fieldHeight)
                 .coerceAtLeast(2)
             val boardW = cell * fieldWidth
             val boardH = cell * fieldHeight
             val x0 = (width - boardW) / 2
-            val y0 = (height - PAD - boardH) / 2
+            val y0 = TOP_GAP + (height - TOP_GAP - PAD - boardH) / 2
 
             g2.color = CARD
             g2.fill(RoundRectangle2D.Float(
@@ -180,6 +180,7 @@ class SnakeFrame(private val fieldWidth: Int, private val fieldHeight: Int) {
 
     private companion object {
         const val PAD = 24
+        const val TOP_GAP = 20
 
         val BG = Color(0x0f1115)
         val CARD = Color(0x171a21)
