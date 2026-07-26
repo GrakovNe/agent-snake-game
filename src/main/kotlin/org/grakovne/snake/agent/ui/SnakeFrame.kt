@@ -49,7 +49,7 @@ class SnakeFrame(private val fieldWidth: Int, private val fieldHeight: Int) {
             g2.fillRect(0, 0, width, height)
 
             // shared geometry: board card first, header aligns to it
-            val availH = height - HEADER_H - MARGIN
+            val availH = height - HEADER_H - FOOTER_H
             val cell = minOf((width - 2 * MARGIN) / fieldWidth, availH / fieldHeight)
                 .coerceAtLeast(2)
             val boardW = cell * fieldWidth
@@ -59,6 +59,7 @@ class SnakeFrame(private val fieldWidth: Int, private val fieldHeight: Int) {
 
             paintHeader(g2, x0, boardW)
             paintBoard(g2, x0, y0, cell, boardW, boardH)
+            paintFooter(g2)
         }
 
         private fun paintHeader(g2: Graphics2D, x0: Int, boardW: Int) {
@@ -89,6 +90,17 @@ class SnakeFrame(private val fieldWidth: Int, private val fieldHeight: Int) {
             g2.fill(RoundRectangle2D.Float(x0.toFloat(), 60f, boardW.toFloat(), 6f, 3f, 3f))
             g2.paint = GradientPaint(x0.toFloat(), 0f, from, (x0 + boardW).toFloat(), 0f, to)
             g2.fill(RoundRectangle2D.Float(x0.toFloat(), 60f, boardW * pct, 6f, 3f, 3f))
+        }
+
+        private fun paintFooter(g2: Graphics2D) {
+            g2.font = FOOTER_TITLE
+            g2.color = TEXT
+            var text = "AI Snake"
+            g2.drawString(text, (width - g2.fontMetrics.stringWidth(text)) / 2, height - 26)
+            g2.font = FOOTER_SUB
+            g2.color = MUTED
+            text = "Max Grakov with Fable 5"
+            g2.drawString(text, (width - g2.fontMetrics.stringWidth(text)) / 2, height - 10)
         }
 
         private fun paintBoard(g2: Graphics2D, x0: Int, y0: Int, cell: Int, boardW: Int, boardH: Int) {
@@ -142,7 +154,7 @@ class SnakeFrame(private val fieldWidth: Int, private val fieldHeight: Int) {
         canvas.background = BG
         canvas.preferredSize = Dimension(
             fieldWidth * 14 + 2 * MARGIN,
-            fieldHeight * 14 + HEADER_H + MARGIN,
+            fieldHeight * 14 + HEADER_H + FOOTER_H,
         )
         frame.add(canvas, BorderLayout.CENTER)
         frame.pack()
@@ -198,6 +210,7 @@ class SnakeFrame(private val fieldWidth: Int, private val fieldHeight: Int) {
     private companion object {
         const val MARGIN = 32
         const val HEADER_H = 92
+        const val FOOTER_H = 56
 
         val BG = Color(0x0f1115)
         val CARD = Color(0x171a21)
@@ -216,5 +229,7 @@ class SnakeFrame(private val fieldWidth: Int, private val fieldHeight: Int) {
 
         val NUM_BIG = Font("Helvetica Neue", Font.BOLD, 36)
         val TEXT_SMALL = Font("Helvetica Neue", Font.PLAIN, 13)
+        val FOOTER_TITLE = Font("Helvetica Neue", Font.BOLD, 13)
+        val FOOTER_SUB = Font("Helvetica Neue", Font.PLAIN, 11)
     }
 }

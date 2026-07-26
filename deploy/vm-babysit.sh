@@ -11,4 +11,5 @@ pgrep -f HarvestKt >/dev/null && exit 0
 echo "$(date -Is) babysit: relaunching harvest $SIZE/$GAMES/$SEEDFROM" >> harvest.log
 nohup nice -n 5 ./gradlew -q harvest \
   -Psize="$SIZE" -Pgames="$GAMES" -PseedFrom="$SEEDFROM" -Prollouts="$ROLLOUTS" -Pout="$OUT" \
+  -PstarveDiv="${STARVEDIV:-1}" -PeveryNth="${EVERYNTH:-1}" \
   >> harvest.log 2>&1 &

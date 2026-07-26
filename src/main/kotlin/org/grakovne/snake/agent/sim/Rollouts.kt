@@ -18,10 +18,23 @@ object Rollouts {
         timedCandidate = false,
     )
 
-    /** Final score of one championship-policy playout from the given body state. */
-    fun playOut(width: Int, height: Int, body: List<Position>, seed: Long): Int {
+    /**
+     * Final score of one championship-policy playout from the given body state.
+     * [starvationBudget] caps hunts inside the rollout: a reduced budget makes labels
+     * uniformly slightly pessimistic but dramatically cheaper on big boards.
+     */
+    fun playOut(
+        width: Int,
+        height: Int,
+        body: List<Position>,
+        seed: Long,
+        starvationBudget: Int = width * height * 2,
+    ): Int {
         val game = SnakeGame(
-            GameConfig(width = width, height = height, seed = seed),
+            GameConfig(
+                width = width, height = height, seed = seed,
+                maxStepsWithoutFood = starvationBudget,
+            ),
             initialBody = body,
         )
         val policy = SafeGreedyStrategy(

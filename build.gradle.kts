@@ -34,7 +34,7 @@ fun registerRun(name: String, mainClassName: String, description: String) =
             "huntDump", "autopsy", "autopsyEvery", "undig",
             "rolloutFree", "rolloutCount", "rngSpread",
             "episodeSeeds", "episodeRollouts", "episodeFree",
-            "seedFrom", "rollouts", "out", "valueNet",
+            "seedFrom", "rollouts", "out", "valueNet", "starveDiv", "everyNth",
         ).forEach { key ->
             (project.findProperty(key) as? String)?.let { systemProperty(key, it) }
         }

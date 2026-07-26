@@ -30,10 +30,15 @@ fun main() {
     val games = intProp("games", 200)
     val seedFrom = longProp("seedFrom", 0)
     val rollouts = intProp("rollouts", 32)
+    val starveDiv = intProp("starveDiv", 1)      // rollout starvation budget = 2*area/starveDiv
+    val everyNth = intProp("everyNth", 1)        // keep every N-th harvested state
     val parallelism = intProp("parallelism", Runtime.getRuntime().availableProcessors())
     val outPath = prop("out", "data/planes-$size-seed$seedFrom.txt")
 
-    println("harvest: field=${size}x$size games=$games seedFrom=$seedFrom rollouts=$rollouts -> $outPath")
+    println(
+        "harvest: field=${size}x$size games=$games seedFrom=$seedFrom rollouts=$rollouts " +
+            "starveDiv=$starveDiv everyNth=$everyNth -> $outPath"
+    )
 
     // Phase 1: play games, dump endgame post-eat states.
     val perGame = arrayOfNulls<MutableList<IntArray>>(games)
@@ -53,6 +58,7 @@ fun main() {
         ).also { it.stateObserver = { state -> states.add(state) } }
     }
     val states = perGame.filterNotNull().flatten()
+        .filterIndexed { index, _ -> index % everyNth == 0 }
     println(
         "phase 1: ${states.size} states from $games games in %.1fs"
             .format((System.nanoTime() - startedAt) / 1e9)
@@ -82,6 +88,7 @@ fun main() {
                         total += Rollouts.playOut(
                             size, size, body,
                             seedFrom * 1_000_003 + (base + offset) * 977L + r,
+                            starvationBudget = size * size * 2 / starveDiv,
                         )
                     }
                     total / rollouts
