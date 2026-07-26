@@ -266,8 +266,15 @@ class SafeGreedyStrategy(
             }
             // Every intermediate extension shape is a candidate: the walk that leaves the
             // free space digestible is usually neither the shortest nor the maximal sweep.
+            // Several randomized runs cover genuinely different orderings; during long
+            // stalls the wide search runs on a cadence to keep the tick affordable.
+            val wide = game.stepsSinceFood <= 16 || game.stepsSinceFood % 4 == 0
             board.foodPathSnapshots(rng = null, limit = 24) { paths.add(it) }
-            board.foodPathSnapshots(rng = random, limit = 16) { paths.add(it) }
+            if (wide) {
+                repeat(5) {
+                    board.foodPathSnapshots(rng = random, limit = 20) { paths.add(it) }
+                }
+            }
             // In the rigid zero-gap endgame loop there are NO statically free cells: the
             // only route to food is the corridor of vacating tail cells. The timed path is
             // the one candidate that can see it; acceptance still demands a statically-safe
