@@ -131,7 +131,20 @@ class BoardSearch(val width: Int, val height: Int) {
      * vacated window trailing the tail). Cells in free clusters have slack and pass.
      * Guarding eats with this keeps every possible future food spawn edible.
      */
-    fun undigestibleHoles(body: IntArray): Int {
+    fun undigestibleHoles(body: IntArray, minOverlap: Int = 1): Int = scanUndigestible(body, minOverlap, null)
+
+    /** Cells of every undigestible hole for the given body. */
+    fun undigestibleHoleCells(body: IntArray, minOverlap: Int = 1): IntArray {
+        val cells = ArrayList<Int>(4)
+        scanUndigestible(body, minOverlap) { cells.add(it) }
+        return cells.toIntArray()
+    }
+
+    private inline fun scanUndigestible(
+        body: IntArray,
+        minOverlap: Int,
+        noinline collect: ((Int) -> Unit)?,
+    ): Int {
         val loop = body.size
         val gap = size - loop
         if (gap <= 1) return 0
@@ -153,31 +166,75 @@ class BoardSearch(val width: Int, val height: Int) {
             }
             if (bodies < 2) {
                 undigestible++
+                collect?.invoke(cell)
                 continue
             }
             // Digestible iff two neighbors are free simultaneously at some phase of the
             // loop: each body cell is free for `gap` ticks after it vacates, so the free
-            // intervals [b_i, b_i+gap) and [b_j, b_j+gap) must overlap. That is when a
-            // static path into the hole and an exit both exist and acceptance fires.
+            // intervals [b_i, b_i+gap) and [b_j, b_j+gap) must overlap — with at least
+            // [minOverlap] ticks of slack: a bare 1-tick overlap admits the entry but not
+            // the exit-and-continue, which is what makes formula-digestible holes lethal.
             for (i in 0 until bodies) {
                 for (j in i + 1 until bodies) {
                     val forward = (bodyNeighbors[i] - bodyNeighbors[j]).mod(loop)
-                    if (forward < gap || loop - forward < gap) continue@cells
+                    if (gap - forward >= minOverlap || gap - (loop - forward) >= minOverlap) continue@cells
                 }
             }
             undigestible++
+            collect?.invoke(cell)
         }
         return undigestible
     }
 
+    /**
+     * Single-detour mutations of [walk]: every insertion of a free 2-cell detour either
+     * near a [focus] cell (a misaligned hole — inserting there shifts the relative vacate
+     * phases of its walls) or at a coarse stride elsewhere (phase repairs can also come
+     * from shifting a distant segment). Emits up to [limit] variants.
+     */
+    fun detourVariants(walk: IntArray, focus: IntArray, limit: Int, collect: (IntArray) -> Unit) {
+        java.util.Arrays.fill(onPath, false)
+        walk.forEach { onPath[it] = true }
+        var emitted = 0
+        for (i in 0 until walk.size - 1) {
+            if (emitted >= limit) return
+            val cell = walk[i]
+            var eligible = i % 5 == 0
+            if (!eligible) {
+                val x = cell % width
+                val y = cell / width
+                for (f in focus) {
+                    if (kotlin.math.abs(x - f % width) + kotlin.math.abs(y - f / width) <= 3) {
+                        eligible = true
+                        break
+                    }
+                }
+            }
+            if (!eligible) continue
+            for (direction in 0 until 4) {
+                val c = neighbor(cell, direction)
+                val d = neighbor(walk[i + 1], direction)
+                if (c == -1 || d == -1 || onPath[c] || onPath[d]) continue
+                if (vacate[c] != 0 || vacate[d] != 0) continue
+                val variant = IntArray(walk.size + 2)
+                System.arraycopy(walk, 0, variant, 0, i + 1)
+                variant[i + 1] = c
+                variant[i + 2] = d
+                System.arraycopy(walk, i + 1, variant, i + 3, walk.size - i - 1)
+                collect(variant)
+                if (++emitted >= limit) return
+            }
+        }
+    }
+
     /** [undigestibleHoles] of the currently loaded board (body order rebuilt from vacate times). */
-    fun undigestibleHolesNow(): Int {
+    fun undigestibleHolesNow(minOverlap: Int = 1): Int {
         val result = IntArray(bodyLength)
         for (cell in 0 until size) {
             val v = vacate[cell]
             if (v != 0) result[bodyLength - v] = cell
         }
-        return undigestibleHoles(result)
+        return undigestibleHoles(result, minOverlap)
     }
 
     /**
@@ -242,12 +299,32 @@ class BoardSearch(val width: Int, val height: Int) {
      * the best plan (fewest undigestible holes after eating) is returned.
      */
     fun bestHuntPlan(body: IntArray): HuntPlan? {
-        val loop = body.size
-        if (!adjacent(body[0], body[loop - 1])) return null
+        if (!adjacent(body[0], body[body.size - 1])) return null
+        return huntPlanFor(body, foodIdx, waitStride = 1, firstOnly = false)
+    }
 
+    /**
+     * 1-ply spawn lookahead: assuming the snake settles into [loopBody] and food appears
+     * at [foodCell], does any circulation phase admit a timed eat with a verified escape?
+     * Exact machinery, sampled phases (stride ~ gap/3 — entry windows are ~gap wide).
+     */
+    fun futureFoodEdible(loopBody: IntArray, foodCell: Int): Boolean {
+        val gap = size - loopBody.size
+        val stride = maxOf(1, gap / 3)
+        return huntPlanFor(loopBody, foodCell, waitStride = stride, firstOnly = true) != null
+    }
+
+    private fun huntPlanFor(
+        body: IntArray,
+        target: Int,
+        waitStride: Int,
+        firstOnly: Boolean,
+    ): HuntPlan? {
+        val loop = body.size
         var best: HuntPlan? = null
         val rotated = IntArray(loop)
-        for (wait in 0 until loop) {
+        var wait = 0
+        while (wait < loop) {
             for (i in 0 until loop) {
                 rotated[i] = body[(i - wait).mod(loop)]
             }
@@ -257,31 +334,42 @@ class BoardSearch(val width: Int, val height: Int) {
                 scratchVacate[rotated[i]] = loop - i
             }
             val walk = bfs(
-                scratchVacate, rotated[0], foodIdx,
+                scratchVacate, rotated[0], target,
                 timeAware = true, margin = 0, blockFood = false, targetWalkable = false,
-            ) ?: continue
+            )
+            if (walk == null) {
+                wait += waitStride
+                continue
+            }
 
             val postBody = bodyAfterEatingBody(rotated, walk)
             var escape: IntArray? = null
+            var viable = true
             if (postBody.size < size) {
                 escape = escapePlanFor(postBody, timeAware = true, avoidFree = true)
                     ?.takeIf { it.size > 1 }
                     ?: escapePlanFor(postBody, timeAware = true, avoidFree = false)
-                if (escape == null || escape.size < 2) continue
-                if (!tailReachableFor(bodyAfterWalk(postBody, escape), timeAware = false)) continue
+                if (escape == null || escape.size < 2 ||
+                    !tailReachableFor(bodyAfterWalk(postBody, escape), timeAware = false)
+                ) {
+                    viable = false
+                }
             }
 
-            val undigestible = undigestibleHoles(postBody)
-            if (best == null || undigestible < best.undigestible) {
-                val path = IntArray(1 + wait + walk.size - 1)
-                path[0] = body[0]
-                for (j in 0 until wait) {
-                    path[1 + j] = body[loop - 1 - j]
+            if (viable) {
+                val undigestible = undigestibleHoles(postBody)
+                if (best == null || undigestible < best.undigestible) {
+                    val path = IntArray(1 + wait + walk.size - 1)
+                    path[0] = body[0]
+                    for (j in 0 until wait) {
+                        path[1 + j] = body[loop - 1 - j]
+                    }
+                    System.arraycopy(walk, 1, path, 1 + wait, walk.size - 1)
+                    best = HuntPlan(path, escape, undigestible, wait)
+                    if (firstOnly || undigestible == 0) return best
                 }
-                System.arraycopy(walk, 1, path, 1 + wait, walk.size - 1)
-                best = HuntPlan(path, escape, undigestible, wait)
-                if (undigestible == 0) return best
             }
+            wait += waitStride
         }
         return best
     }

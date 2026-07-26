@@ -75,7 +75,8 @@ fun main() {
         }
 
         val counters = (strategy as? org.grakovne.snake.agent.strategy.SafeGreedyStrategy)?.let {
-            " timed=${it.timedCommits} hunts=${it.huntCommits} chains=${it.escapeChains} " +
+            " timed=${it.timedCommits} hunts=${it.huntCommits} shaped=${it.shaperCommits} " +
+                "mmFallback=${it.minimaxFallbacks} chains=${it.escapeChains} " +
                 "midwalk=${it.midwalkInvalidations} desperate=${it.desperationEats}"
         } ?: ""
 

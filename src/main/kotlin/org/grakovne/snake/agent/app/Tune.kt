@@ -24,14 +24,14 @@ fun main() {
         stallCommitMidgame = false, avoidAroundFood = false,
         guardDeadCells = false, timedCandidate = false,
     )
-    // Round 5: timed candidate as a hunt rescue after a fraction of the budget.
+    // Round 6: digestibility window slack (stricter guard vs starvation trade-off).
     val configs = linkedMapOf(
-        "B" to b,
-        "B+rescue15" to b.copy(timedRescuePercent = 15),
-        "B+rescue30" to b.copy(timedRescuePercent = 30),
-        "B+rescue50" to b.copy(timedRescuePercent = 50),
-        "B+rescue70" to b.copy(timedRescuePercent = 70),
-        "B+rescue30div10" to b.copy(timedRescuePercent = 30, endgameDivisor = 10),
+        "slack1" to b,
+        "slack2" to b.copy(digestSlack = 2),
+        "slack3" to b.copy(digestSlack = 3),
+        "slack4" to b.copy(digestSlack = 4),
+        "slack6" to b.copy(digestSlack = 6),
+        "slack3noShaper" to b.copy(digestSlack = 3, shaper = false),
     )
 
     println("tune: field=${size}x$size games=$games seed=$seed configs=${configs.size}")

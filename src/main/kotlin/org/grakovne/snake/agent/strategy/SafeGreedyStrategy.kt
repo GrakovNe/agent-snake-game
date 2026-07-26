@@ -52,6 +52,12 @@ data class SafeGreedyKnobs(
     val timedRescuePercent: Int = 0,
     /** desperation when remaining budget < path + desperationMargin * (w + h) */
     val desperationMargin: Int = 2,
+    /** directed detour-insertion beam repair when all candidates are guard-rejected */
+    val shaper: Boolean = true,
+    /** required overlap (ticks) of hole-wall free intervals to count a hole digestible */
+    val digestSlack: Int = 1,
+    /** with <= this many free cells, rank candidates by provably-edible future spawns */
+    val minimaxFree: Int = 16,
 )
 
 class SafeGreedyStrategy(
@@ -93,6 +99,10 @@ class SafeGreedyStrategy(
     var midwalkInvalidations = 0
         private set
     var huntCommits = 0
+        private set
+    var shaperCommits = 0
+        private set
+    var minimaxFallbacks = 0
         private set
 
     private var huntExhausted = false
@@ -144,7 +154,7 @@ class SafeGreedyStrategy(
                 (freeCells <= 2 && game.stepsSinceFood > game.starvationLimit * knobs.patiencePercent / 100)
 
             val deadNow = board.deadFreeCells()
-            val undigestibleNow = if (endgame) board.undigestibleHolesNow() else 0
+            val undigestibleNow = if (endgame) board.undigestibleHolesNow(knobs.digestSlack) else 0
             // Fragmentation ranking only matters where the trajectory loop is rigid; in the
             // open midgame it just displaces the better-shaped hugging path.
             val ranked = if (endgame) {
@@ -166,8 +176,33 @@ class SafeGreedyStrategy(
             // Statically-safe walks first; a timed walk (escape-verified) only when no
             // static candidate survives — timed eats rewire the loop more aggressively
             // and must not displace static ones in the ranking.
-            val accepted = ranked.firstOrNull { it.staticSafe && guarded(it) }
+            var accepted = ranked.firstOrNull { it.staticSafe && guarded(it) }
                 ?: ranked.firstOrNull { it.safe && guarded(it) }
+
+            // Spawn lookahead at the freeze point: the next spawn is a lottery over the
+            // remaining free cells, so among acceptable walks prefer the one that leaves
+            // the fewest provably-inedible spawn cells (phase enumeration with the real
+            // eat machinery, not the digestibility formula). Runs once per actual eat.
+            if (accepted != null && endgame && freeCells <= knobs.minimaxFree) {
+                val pool = ranked.filter { it.staticSafe && guarded(it) }.take(6)
+                if (pool.size > 1) {
+                    val best = pool.minBy { spawnBadCells(board, it) }
+                    if (best !== accepted) minimaxFallbacks++
+                    accepted = best
+                }
+            }
+
+            // Every candidate is guard-rejected: directed repair. Beam search over detour
+            // insertions reshapes the walk until no undigestible hole remains — detours
+            // shift the relative vacate phases of hole walls and swap which tail cells
+            // get dropped, which is exactly the material misalignments are made of.
+            if (accepted == null && endgame && knobs.shaper &&
+                (game.stepsSinceFood <= 8 || game.stepsSinceFood % 4 == 0)
+            ) {
+                accepted = shapeWalk(game, board, ranked, undigestibleNow)
+                if (accepted != null) shaperCommits++
+            }
+
             if (accepted != null) {
                 if (!accepted.staticSafe) timedCommits++
                 pendingEscape = if (accepted.staticSafe) null else accepted.escapePlan
@@ -247,6 +282,64 @@ class SafeGreedyStrategy(
         return fallback(game, board, game.heading)
     }
 
+    /** Number of free cells of the candidate's post-eat loop with no provable future eat. */
+    private fun spawnBadCells(board: BoardSearch, candidate: Candidate): Int {
+        if (candidate.postBody.size == board.width * board.height) return 0
+        val inBody = HashSet<Int>(candidate.postBody.size * 2)
+        candidate.postBody.forEach { inBody.add(it) }
+        var bad = 0
+        for (cell in 0 until board.width * board.height) {
+            if (cell in inBody) continue
+            if (!board.futureFoodEdible(candidate.postBody, cell)) bad++
+        }
+        return bad
+    }
+
+    /**
+     * Directed walk repair: beam search over single-detour insertions, minimizing the
+     * number of undigestible holes after eating. Safety is verified only on finalists.
+     */
+    private fun shapeWalk(
+        game: GameView,
+        board: BoardSearch,
+        seeds: List<Candidate>,
+        undigestibleNow: Int,
+    ): Candidate? {
+        class Node(val walk: IntArray, val undigestible: Int)
+
+        var budget = 160
+        val seen = HashSet<Int>()
+        var beam = seeds.take(3).map { Node(it.path, it.undigestible) }
+        if (beam.isEmpty()) return null
+
+        repeat(8) {
+            val expansions = ArrayList<Node>()
+            for (node in beam) {
+                if (budget <= 0 || node.undigestible == 0) continue
+                val holes = board.undigestibleHoleCells(board.bodyAfterEating(game.snake, node.walk), knobs.digestSlack)
+                board.detourVariants(node.walk, holes, limit = 16) { variant ->
+                    if (budget-- > 0 && seen.add(variant.contentHashCode())) {
+                        expansions.add(
+                            Node(
+                                variant,
+                                board.undigestibleHoles(board.bodyAfterEating(game.snake, variant), knobs.digestSlack),
+                            )
+                        )
+                    }
+                }
+            }
+            if (expansions.isEmpty()) return@repeat
+            beam = (beam + expansions).sortedBy { it.undigestible }.take(3)
+        }
+
+        for (node in beam.sortedBy { it.undigestible }) {
+            if (node.undigestible > undigestibleNow) break
+            val candidate = evaluate(game, board, node.walk, endgame = true) ?: continue
+            if (candidate.safe) return candidate
+        }
+        return null
+    }
+
     private fun buildCandidates(game: GameView, board: BoardSearch, endgame: Boolean): List<Candidate> {
         val paths = ArrayList<IntArray>(6)
         board.shortestPathFromHead(
@@ -320,7 +413,7 @@ class SafeGreedyStrategy(
             staticSafe = staticSafe,
             components = board.freeComponentsFor(postBody),
             deadCells = board.deadFreeCellsFor(postBody),
-            undigestible = if (endgame) board.undigestibleHoles(postBody) else 0,
+            undigestible = if (endgame) board.undigestibleHoles(postBody, knobs.digestSlack) else 0,
         )
     }
 
