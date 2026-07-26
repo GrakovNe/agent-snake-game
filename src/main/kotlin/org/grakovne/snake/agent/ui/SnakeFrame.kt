@@ -61,7 +61,7 @@ class SnakeFrame(private val fieldWidth: Int, private val fieldHeight: Int) {
             val total = "/ %,d".format(area).replace(',', ' ')
             g2.drawString(total, x + g2.getFontMetrics(NUM_BIG).stringWidth(scoreStr) + 10, 44)
 
-            val pctStr = "%.1f%%".format(pct * 100)
+            val pctStr = "%.1f%%".format(java.util.Locale.ROOT, pct * 100)
             g2.drawString(pctStr, x + w - g2.fontMetrics.stringWidth(pctStr), 44)
 
             val (from, to) = when (snap?.status) {
@@ -110,11 +110,15 @@ class SnakeFrame(private val fieldWidth: Int, private val fieldHeight: Int) {
                     arc, arc,
                 )
             }
+            // (connector is defined on the class to keep this closure light)
 
+            // Segments are joined by small connectors so the body reads as one
+            // continuous creature instead of a string of beads.
             val n = snap.body.size
             for (i in n - 1 downTo 1) {
                 g2.color = bodyColor(i.toFloat() / n)
                 g2.fill(cellRect(snap.body[i]))
+                connector(g2, snap.body[i], snap.body[i - 1], x0, y0, cell, gap)
             }
             g2.color = HEAD
             g2.fill(cellRect(snap.body[0]))
@@ -172,10 +176,24 @@ class SnakeFrame(private val fieldWidth: Int, private val fieldHeight: Int) {
     fun newGame(round: Long, strategy: String, seed: Long) = Unit
 
     private fun bodyColor(t: Float): Color {
+        // brightness floor keeps the tail clearly visible against the board
         val hue = 0.53f + 0.09f * t
-        val sat = 0.65f + 0.15f * t
-        val bri = 0.95f - 0.62f * t
+        val sat = 0.62f + 0.18f * t
+        val bri = 0.95f - 0.38f * t
         return Color.getHSBColor(hue, sat, bri)
+    }
+
+    /** Fills the gap strip between two adjacent body cells (current fill color). */
+    private fun connector(g2: Graphics2D, a: Int, b: Int, x0: Int, y0: Int, cell: Int, gap: Int) {
+        if (gap == 0) return
+        val ax = x0 + (a % fieldWidth) * cell
+        val ay = y0 + (a / fieldWidth) * cell
+        val bx = x0 + (b % fieldWidth) * cell
+        val by = y0 + (b / fieldWidth) * cell
+        when {
+            ay == by -> g2.fillRect(minOf(ax, bx) + cell - gap, ay + gap, 2 * gap, cell - 2 * gap)
+            ax == bx -> g2.fillRect(ax + gap, minOf(ay, by) + cell - gap, cell - 2 * gap, 2 * gap)
+        }
     }
 
     private companion object {
