@@ -46,9 +46,11 @@ object Strategies {
             knobs = SafeGreedyKnobs(
                 stallCommitMidgame = false, avoidAroundFood = false,
                 guardDeadCells = false, timedCandidate = false,
+                // Working point: k4/m3 saturates the search (k6/m5 measured no better),
+                // episodeFree=40 keeps 60x60 rollout costs sane.
                 episodeSeeds = intProp("episodeSeeds", 4),
-                episodeRollouts = intProp("episodeRollouts", 1),
-                episodeFree = intProp("episodeFree", 0),
+                episodeRollouts = intProp("episodeRollouts", 3),
+                episodeFree = intProp("episodeFree", 40),
             ),
         )
         // Variance-attribution variants: chaos only in one phase.
