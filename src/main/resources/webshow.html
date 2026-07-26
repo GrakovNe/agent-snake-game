@@ -21,10 +21,10 @@
     min-height: 100%;
   }
   .wrap {
-    display: flex; flex-direction: column;
+    display: flex; flex-direction: column; align-items: center;
     height: 100%; padding: 24px 0 12px;
   }
-  .header { margin-bottom: 14px; }
+  .header { margin-bottom: 14px; width: 400px; }
   .scoreline { display: flex; align-items: baseline; }
   .score { font-size: 34px; font-weight: 700; letter-spacing: .5px; }
   .total { font-size: 13px; color: var(--muted); margin-left: 10px; }
@@ -42,8 +42,7 @@
   .bar.dead > div { background: linear-gradient(90deg, var(--bad), var(--bad-deep)); }
   .boardcard {
     background: var(--card); border-radius: 18px; padding: 8px;
-    flex: 1; display: flex; align-items: center; justify-content: center;
-    min-height: 0;
+    display: flex; align-items: center; justify-content: center;
   }
   canvas { display: block; }
   .footer { text-align: center; margin-top: 14px; color: var(--muted); }
@@ -87,14 +86,19 @@ function rr(x, y, w, h, r) {
   ctx.fill();
 }
 
+const headerEl = document.querySelector('.header');
+const footerEl = document.querySelector('.footer');
+
 function draw() {
   requestAnimationFrame(draw);
   if (!frame) return;
   const { w, h, b, f, st } = frame;
 
-  const card = canvas.parentElement;
-  const availW = card.clientWidth - 16, availH = card.clientHeight - 16;
-  const cell = Math.max(2, Math.floor(Math.min(availW / w, availH / h)));
+  // size from the viewport; the header then matches the board width
+  const availW = window.innerWidth - 64;
+  const availH = window.innerHeight
+    - headerEl.offsetHeight - footerEl.offsetHeight - 90;
+  const cell = Math.max(3, Math.floor(Math.min(availW / w, availH / h)));
   const bw = cell * w, bh = cell * h;
   const dpr = window.devicePixelRatio || 1;
   if (canvas.width !== bw * dpr || canvas.height !== bh * dpr) {
@@ -104,8 +108,8 @@ function draw() {
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.clearRect(0, 0, bw, bh);
 
-  const inset = Math.max(1, Math.floor(cell * 0.16));
-  const inner = cell - 2 * inset;
+  const inset = cell >= 5 ? Math.max(1, Math.floor(cell * 0.16)) : 0;
+  const inner = Math.max(2, cell - 2 * inset);
   const arc = Math.min(8, inner * 0.6);
   const px = i => (i % w) * cell, py = i => Math.floor(i / w) * cell;
 
@@ -139,7 +143,7 @@ function draw() {
   document.getElementById('fill').style.width = (100 * s / area) + '%';
   document.getElementById('bar').className =
     'bar' + (st === 'WON' ? ' won' : st === 'DEAD' ? ' dead' : '');
-  document.querySelector('.wrap').style.width = bw + 'px';
+  headerEl.style.width = bw + 'px';
 }
 
 new EventSource('/events').onmessage = e => { frame = JSON.parse(e.data); };
