@@ -36,6 +36,7 @@ def load_shards(patterns):
 
 
 def to_planes(rows):
+    """rows must share one board size; returns (x, y, w, h)."""
     w, h = rows[0][1], rows[0][2]
     area = w * h
     x = np.zeros((len(rows), 4, h, w), dtype=np.float32)
@@ -52,6 +53,13 @@ def to_planes(rows):
         # label: normalize the deficit — predict (area - final score) squashed
         y[i] = (area - label) / 32.0
     return x, y, w, h
+
+
+def group_by_size(rows):
+    groups = {}
+    for row in rows:
+        groups.setdefault((row[1], row[2]), []).append(row)
+    return groups
 
 
 class ValueNet(nn.Module):
@@ -83,50 +91,62 @@ def main():
     rows = load_shards(args.shards)
     if not rows:
         sys.exit("no data")
-    x, y, w, h = to_planes(rows)
-    print(f"{len(rows)} samples {w}x{h}; deficit mean={32 * y.mean():.2f} std={32 * y.std():.2f}")
-
     rng = np.random.default_rng(7)
-    order = rng.permutation(len(rows))
-    val_n = int(len(rows) * args.val_frac)
-    val_idx, train_idx = order[:val_n], order[val_n:]
-
     device = "mps" if torch.backends.mps.is_available() else "cpu"
+
+    # The net is fully convolutional: one model serves every board size. Batches are
+    # homogeneous by size; sizes are interleaved during training.
+    sizes = {}
+    for (w, h), group in group_by_size(rows).items():
+        x, y, _, _ = to_planes(group)
+        order = rng.permutation(len(group))
+        val_n = max(1, int(len(group) * args.val_frac))
+        xt, yt = torch.from_numpy(x), torch.from_numpy(y)
+        sizes[(w, h)] = {
+            "xt": xt, "yt": yt,
+            "val": order[:val_n], "train": order[val_n:],
+        }
+        print(f"{len(group)} samples {w}x{h}; deficit mean={32 * y.mean():.2f} std={32 * y.std():.2f}")
+
     net = ValueNet().to(device)
     opt = torch.optim.AdamW(net.parameters(), lr=args.lr)
     loss_fn = nn.SmoothL1Loss()
-
-    xt = torch.from_numpy(x)
-    yt = torch.from_numpy(y)
-    xv = xt[val_idx].to(device)
-    yv = yt[val_idx].to(device)
-
-    baseline = float(((yv - yt[train_idx].mean()) ** 2).mean().sqrt()) * 32
-    print(f"device={device}  val baseline RMSE (predict mean) = {baseline:.2f} cells")
+    print(f"device={device}")
+    for (w, h), s in sizes.items():
+        base = float(((s["yt"][s["val"]] - s["yt"][s["train"]].mean()) ** 2).mean().sqrt()) * 32
+        print(f"  {w}x{h}: val baseline RMSE (predict mean) = {base:.2f} cells")
 
     for epoch in range(args.epochs):
         net.train()
-        perm = rng.permutation(train_idx)
-        total, batches = 0.0, 0
-        for start in range(0, len(perm), args.batch):
-            idx = perm[start:start + args.batch]
-            xb = xt[idx].to(device)
-            yb = yt[idx].to(device)
+        batches = []
+        for key, s in sizes.items():
+            perm = rng.permutation(s["train"])
+            for start in range(0, len(perm), args.batch):
+                batches.append((key, perm[start:start + args.batch]))
+        rng.shuffle(batches)
+        total = 0.0
+        for key, idx in batches:
+            s = sizes[key]
+            xb = s["xt"][idx].to(device)
+            yb = s["yt"][idx].to(device)
             opt.zero_grad()
             loss = loss_fn(net(xb), yb)
             loss.backward()
             opt.step()
-            total += float(loss)
-            batches += 1
+            total += float(loss.detach())
         net.eval()
+        report = []
         with torch.no_grad():
-            pred = net(xv)
-            rmse = float(((pred - yv) ** 2).mean().sqrt()) * 32
-            corr = float(np.corrcoef(pred.cpu().numpy(), yv.cpu().numpy())[0, 1])
-        print(f"epoch {epoch + 1:3d}  train {total / batches:.4f}  "
-              f"val RMSE {rmse:.2f} cells  corr {corr:.3f}")
+            for (w, h), s in sizes.items():
+                pred = net(s["xt"][s["val"]].to(device))
+                yv = s["yt"][s["val"]].to(device)
+                rmse = float(((pred - yv) ** 2).mean().sqrt()) * 32
+                corr = float(np.corrcoef(pred.cpu().numpy(), yv.cpu().numpy())[0, 1])
+                report.append(f"{w}x{h}: RMSE {rmse:.2f} corr {corr:.3f}")
+        print(f"epoch {epoch + 1:3d}  train {total / len(batches):.4f}  " + "  ".join(report))
 
-    torch.save({"model": net.state_dict(), "w": w, "h": h}, args.out)
+    first = next(iter(sizes))
+    torch.save({"model": net.state_dict(), "w": first[0], "h": first[1]}, args.out)
     print(f"saved {args.out}")
 
 

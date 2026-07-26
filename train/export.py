@@ -22,7 +22,7 @@ dummy = torch.zeros(1, 4, h, w)
 torch.onnx.export(
     net, dummy, dst,
     input_names=["planes"], output_names=["deficit"],
-    dynamic_axes={"planes": {0: "batch"}, "deficit": {0: "batch"}},
+    dynamic_axes={"planes": {0: "batch", 2: "h", 3: "w"}, "deficit": {0: "batch"}},
     opset_version=17,
 )
-print(f"exported {dst} (input 1x4x{h}x{w}, output = predicted deficit / 32)")
+print(f"exported {dst} (input Bx4xHxW dynamic, output = predicted deficit / 32)")
