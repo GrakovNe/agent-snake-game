@@ -125,6 +125,9 @@ class SafeGreedyStrategy(
     /** Data-collection hook: features of the accepted post-eat loop in the endgame. */
     var eatObserver: ((features: DoubleArray) -> Unit)? = null
 
+    /** Data-collection hook: raw post-eat body (head-first cell indices) in the endgame. */
+    var stateObserver: ((postBody: IntArray) -> Unit)? = null
+
     private var huntExhausted = false
     private var lastHuntStep = -1000
     private var lastFood: Position? = null
@@ -263,6 +266,7 @@ class SafeGreedyStrategy(
                     board.loopFeatures(accepted.postBody, features)
                     observer(features)
                 }
+                stateObserver?.takeIf { endgame }?.let { it(accepted.postBody.copyOf()) }
                 pendingEscape = if (accepted.staticSafe) null else accepted.escapePlan
                 return commit(board, accepted.path, Commitment.FOOD)
             }
