@@ -32,7 +32,8 @@ fun registerRun(name: String, mainClassName: String, description: String) =
         listOf(
             "size", "games", "seed", "delay", "strategy", "parallelism",
             "huntDump", "autopsy", "autopsyEvery", "undig",
-            "rolloutFree", "rolloutCount", "rngSpread", "episodeSeeds", "episodeRollouts",
+            "rolloutFree", "rolloutCount", "rngSpread",
+            "episodeSeeds", "episodeRollouts", "episodeFree",
         ).forEach { key ->
             (project.findProperty(key) as? String)?.let { systemProperty(key, it) }
         }

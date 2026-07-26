@@ -71,6 +71,8 @@ data class SafeGreedyKnobs(
     val episodeSeeds: Int = 0,
     /** continuation rollouts per episode variant (variance reduction of its value) */
     val episodeRollouts: Int = 1,
+    /** run episode search only when freeCells <= this (0 = at the endgame boundary) */
+    val episodeFree: Int = 0,
 )
 
 class SafeGreedyStrategy(
@@ -148,8 +150,12 @@ class SafeGreedyStrategy(
             // playing its continuation to the end, and commit the best episode verbatim.
             if (knobs.episodeSeeds > 0 && random != null) {
                 val area = game.width * game.height
-                val endgameNow = area - game.score <= maxOf(8, area / knobs.endgameDivisor)
-                if (endgameNow) {
+                val boundary = if (knobs.episodeFree > 0) {
+                    knobs.episodeFree
+                } else {
+                    maxOf(8, area / knobs.endgameDivisor)
+                }
+                if (area - game.score <= boundary) {
                     episodePlan(game, board)?.let { plan ->
                         episodeCommits++
                         pendingEscape = null

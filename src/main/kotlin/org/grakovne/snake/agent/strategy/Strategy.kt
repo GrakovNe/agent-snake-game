@@ -48,6 +48,7 @@ object Strategies {
                 guardDeadCells = false, timedCandidate = false,
                 episodeSeeds = intProp("episodeSeeds", 4),
                 episodeRollouts = intProp("episodeRollouts", 1),
+                episodeFree = intProp("episodeFree", 0),
             ),
         )
         // Variance-attribution variants: chaos only in one phase.
