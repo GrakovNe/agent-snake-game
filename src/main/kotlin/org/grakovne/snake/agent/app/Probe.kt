@@ -20,6 +20,21 @@ fun main() {
     val seed = longProp("seed", 42)
     val strategyName = prop("strategy", "safe")
 
+    // rngSpread mode: same game seed, different strategy RNGs — measures how much of
+    // the outcome is decided by the spawn sequence vs the bot's own stochastic choices.
+    val rngSpread = intProp("rngSpread", 0)
+    if (rngSpread > 0) {
+        val scores = (0 until rngSpread).map { i ->
+            GameRunner.play(
+                GameConfig(width = size, height = size, seed = seed),
+                Strategies.create(strategyName, Random(seed * 1000 + i)),
+            ).score
+        }
+        println("seed=$seed scores=${scores.sorted()}")
+        println("min=${scores.min()} max=${scores.max()} mean=${scores.average()}")
+        return
+    }
+
     var lost = 0
     for (index in 0 until games) {
         val gameSeed = seed + index

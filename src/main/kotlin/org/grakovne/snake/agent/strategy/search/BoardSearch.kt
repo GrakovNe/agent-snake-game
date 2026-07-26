@@ -397,6 +397,95 @@ class BoardSearch(val width: Int, val height: Int) {
         return false
     }
 
+    companion object {
+        /** Size of [loopFeatures] vectors. */
+        const val FEATURES = 11
+    }
+
+    /**
+     * Normalized shape features of the loop the snake settles into after an eat — the
+     * inputs of the learned candidate ranker. Counts are divided by the number of free
+     * cells and overlaps by the window width, so weights transfer across board sizes.
+     */
+    fun loopFeatures(body: IntArray, out: DoubleArray) {
+        val loop = body.size
+        val gap = size - loop
+        java.util.Arrays.fill(out, 0.0)
+        out[0] = 1.0
+        out[10] = gap.toDouble() / size
+        if (gap <= 0) return
+
+        java.util.Arrays.fill(scratchVacate, 0)
+        for (i in body.indices) {
+            scratchVacate[body[i]] = loop - i
+        }
+
+        var singles = 0
+        var clustered = 0
+        var dead = 0
+        var wallAdjacent = 0
+        var undig1 = 0
+        var undig3 = 0
+        var undig6 = 0
+        var overlapSum = 0.0
+        var overlapMin = 1.0
+        var isolated = 0
+        val walls = IntArray(4)
+
+        for (cell in 0 until size) {
+            if (scratchVacate[cell] != 0) continue
+            var freeNeighbors = 0
+            var bodies = 0
+            var touchesWall = false
+            for (direction in 0 until 4) {
+                val next = neighbor(cell, direction)
+                if (next == -1) {
+                    touchesWall = true
+                    continue
+                }
+                val b = scratchVacate[next]
+                if (b == 0) freeNeighbors++ else walls[bodies++] = b
+            }
+            if (touchesWall) wallAdjacent++
+            if (freeNeighbors > 0) {
+                clustered++
+                continue
+            }
+            singles++
+            if (bodies == 0) continue
+            isolated++
+            // best pair overlap of free intervals, normalized by gap; negative = misaligned
+            var best = -1.0
+            if (bodies >= 2) {
+                for (i in 0 until bodies) {
+                    for (j in i + 1 until bodies) {
+                        val forward = (walls[i] - walls[j]).mod(loop)
+                        val overlap = maxOf(gap - forward, gap - (loop - forward))
+                        val norm = overlap.toDouble() / gap
+                        if (norm > best) best = norm
+                    }
+                }
+            }
+            if (bodies < 2) dead++
+            if (best < 1.0 / gap) undig1++
+            if (best < 3.0 / gap) undig3++
+            if (best < 6.0 / gap) undig6++
+            overlapSum += best.coerceIn(-1.0, 1.0)
+            if (best < overlapMin) overlapMin = best.coerceIn(-1.0, 1.0)
+        }
+
+        val n = gap.toDouble()
+        out[1] = singles / n
+        out[2] = clustered / n
+        out[3] = dead / n
+        out[4] = undig1 / n
+        out[5] = undig3 / n
+        out[6] = undig6 / n
+        out[7] = if (isolated > 0) overlapSum / isolated else 1.0
+        out[8] = if (isolated > 0) overlapMin else 1.0
+        out[9] = wallAdjacent / n
+    }
+
     /** Number of connected components of free cells for the given body (head-first indices). */
     fun freeComponentsFor(body: IntArray): Int {
         java.util.Arrays.fill(scratchVacate, 0)

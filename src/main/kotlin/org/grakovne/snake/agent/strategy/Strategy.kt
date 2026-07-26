@@ -14,7 +14,10 @@ fun interface Strategy {
 }
 
 object Strategies {
-    val names = listOf("greedy", "random", "safe", "safetime", "hug", "band", "sweep")
+    val names = listOf(
+        "greedy", "random", "safe", "safetime", "hug", "band",
+        "sweep", "learned", "mc", "sweepMidChaos", "sweepEndChaos", "episodes",
+    )
 
     fun create(name: String, random: Random = Random.Default): Strategy = when (name) {
         "greedy" -> GreedyStrategy()
@@ -37,6 +40,74 @@ object Strategies {
                 timedCandidate = false,
             ),
         )
+        // Champion knobs plus endgame episode seed search (exact-replay best-of-k).
+        "episodes" -> SafeGreedyStrategy(
+            timeAware = false, guardHoles = true, random = random,
+            knobs = SafeGreedyKnobs(
+                stallCommitMidgame = false, avoidAroundFood = false,
+                guardDeadCells = false, timedCandidate = false,
+                episodeSeeds = intProp("episodeSeeds", 4),
+                episodeRollouts = intProp("episodeRollouts", 1),
+            ),
+        )
+        // Variance-attribution variants: chaos only in one phase.
+        "sweepMidChaos" -> SafeGreedyStrategy(
+            timeAware = false, guardHoles = true, random = random,
+            knobs = SafeGreedyKnobs(
+                stallCommitMidgame = false, avoidAroundFood = false,
+                guardDeadCells = false, timedCandidate = false,
+                chaosEndgame = false,
+            ),
+        )
+        "sweepEndChaos" -> SafeGreedyStrategy(
+            timeAware = false, guardHoles = true, random = random,
+            knobs = SafeGreedyKnobs(
+                stallCommitMidgame = false, avoidAroundFood = false,
+                guardDeadCells = false, timedCandidate = false,
+                chaosMidgame = false,
+            ),
+        )
+        // Champion knobs plus Monte-Carlo eat selection in the frozen endgame.
+        "mc" -> SafeGreedyStrategy(
+            timeAware = false,
+            guardHoles = true,
+            random = random,
+            knobs = SafeGreedyKnobs(
+                stallCommitMidgame = false,
+                avoidAroundFood = false,
+                guardDeadCells = false,
+                timedCandidate = false,
+                rolloutFree = intProp("rolloutFree", 12),
+                rolloutCount = intProp("rolloutCount", 3),
+            ),
+        )
+        // Champion knobs plus the learned loop-shape ranker (weights from data/weights.txt).
+        "learned" -> SafeGreedyStrategy(
+            timeAware = false,
+            guardHoles = true,
+            random = random,
+            knobs = SafeGreedyKnobs(
+                stallCommitMidgame = false,
+                avoidAroundFood = false,
+                guardDeadCells = false,
+                timedCandidate = false,
+                valueWeights = loadWeights(),
+            ),
+        )
         else -> error("unknown strategy '$name', available: $names")
+    }
+
+    private fun intProp(name: String, default: Int): Int =
+        System.getProperty(name)?.toInt() ?: default
+
+    private var cachedWeights: DoubleArray? = null
+
+    @Synchronized
+    private fun loadWeights(): DoubleArray {
+        cachedWeights?.let { return it }
+        val file = java.io.File("data/weights.txt")
+        require(file.exists()) { "data/weights.txt not found; run collect + fit first" }
+        return file.readText().trim().split(",").map { it.toDouble() }.toDoubleArray()
+            .also { cachedWeights = it }
     }
 }

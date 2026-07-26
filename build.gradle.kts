@@ -32,6 +32,7 @@ fun registerRun(name: String, mainClassName: String, description: String) =
         listOf(
             "size", "games", "seed", "delay", "strategy", "parallelism",
             "huntDump", "autopsy", "autopsyEvery", "undig",
+            "rolloutFree", "rolloutCount", "rngSpread", "episodeSeeds", "episodeRollouts",
         ).forEach { key ->
             (project.findProperty(key) as? String)?.let { systemProperty(key, it) }
         }
@@ -56,6 +57,16 @@ registerRun(
     "tune",
     "org.grakovne.snake.agent.app.TuneKt",
     "Knob search over SafeGreedy configs: ./gradlew tune -Psize=15 -Pgames=200"
+)
+registerRun(
+    "collect",
+    "org.grakovne.snake.agent.app.CollectKt",
+    "Self-play dataset for the loop-shape value: ./gradlew collect -Psize=30 -Pgames=1000"
+)
+registerRun(
+    "fit",
+    "org.grakovne.snake.agent.app.FitKt",
+    "Ridge regression on collected loop features: ./gradlew fit -Psize=30"
 )
 registerRun(
     "arena",

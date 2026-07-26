@@ -6,7 +6,13 @@ import kotlin.random.Random
  * Deterministic snake engine: the snake body is the single source of truth,
  * collisions are O(1) via an occupancy grid, food spawns uniformly on free cells.
  */
-class SnakeGame(val config: GameConfig) : GameView {
+class SnakeGame(
+    val config: GameConfig,
+    /** Optional custom starting body (head first) — used by rollout simulations. */
+    initialBody: List<Position>? = null,
+    /** Optional fixed initial food — used by exact episode simulations. */
+    initialFood: Position? = null,
+) : GameView {
 
     override val width = config.width
     override val height = config.height
@@ -35,14 +41,26 @@ class SnakeGame(val config: GameConfig) : GameView {
     override val starvationLimit: Int = config.maxStepsWithoutFood
 
     init {
-        val headX = width / 2
-        val headY = height / 2
-        repeat(config.initialLength) { offset ->
-            val segment = Position(headX - offset, headY)
-            body.addLast(segment)
-            occupied[segment.index()] = true
+        if (initialBody != null) {
+            initialBody.forEach { segment ->
+                body.addLast(segment)
+                occupied[segment.index()] = true
+            }
+            if (initialBody.size > 1) {
+                val delta = initialBody[0].x - initialBody[1].x to initialBody[0].y - initialBody[1].y
+                heading = Direction.entries.firstOrNull { it.dx == delta.first && it.dy == delta.second }
+                    ?: Direction.RIGHT
+            }
+        } else {
+            val headX = width / 2
+            val headY = height / 2
+            repeat(config.initialLength) { offset ->
+                val segment = Position(headX - offset, headY)
+                body.addLast(segment)
+                occupied[segment.index()] = true
+            }
         }
-        food = spawnFood()
+        food = if (initialFood != null && isFree(initialFood)) initialFood else spawnFood()
     }
 
     override fun isOccupied(position: Position) = occupied[position.index()]

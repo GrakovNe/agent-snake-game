@@ -34,6 +34,9 @@ data class SafeGreedyKnobs(
     val stallCommitMidgame: Boolean = true,
     /** randomize the stall extension bias per tick */
     val chaosStall: Boolean = true,
+    /** phase split of the stall chaos (variance-attribution experiments) */
+    val chaosMidgame: Boolean = true,
+    val chaosEndgame: Boolean = true,
     /** soft-block the cells around the food while stalling */
     val avoidAroundFood: Boolean = true,
     /** endgame guard: post-eat undigestible-hole count must not grow */
@@ -58,6 +61,16 @@ data class SafeGreedyKnobs(
     val digestSlack: Int = 1,
     /** with <= this many free cells, rank candidates by provably-edible future spawns */
     val minimaxFree: Int = 16,
+    /** learned linear value of loop features; when set, ranks endgame candidates */
+    val valueWeights: DoubleArray? = null,
+    /** with <= this many free cells, pick the eat by Monte-Carlo rollouts (0 = off) */
+    val rolloutFree: Int = 0,
+    /** rollouts per candidate */
+    val rolloutCount: Int = 3,
+    /** endgame episode seed search: simulate this many own-RNG variants per food (0 = off) */
+    val episodeSeeds: Int = 0,
+    /** continuation rollouts per episode variant (variance reduction of its value) */
+    val episodeRollouts: Int = 1,
 )
 
 class SafeGreedyStrategy(
@@ -104,6 +117,11 @@ class SafeGreedyStrategy(
         private set
     var minimaxFallbacks = 0
         private set
+    var episodeCommits = 0
+        private set
+
+    /** Data-collection hook: features of the accepted post-eat loop in the endgame. */
+    var eatObserver: ((features: DoubleArray) -> Unit)? = null
 
     private var huntExhausted = false
     private var lastHuntStep = -1000
@@ -122,6 +140,23 @@ class SafeGreedyStrategy(
         if (game.food != lastFood) {
             lastFood = game.food
             huntExhausted = false
+
+            // Episode seed search: the outcome variance lives in the bot's own stochastic
+            // stall choices (measured 885..900 across RNGs on a fixed game seed). The
+            // engine is deterministic and no spawn happens until the eat, so a simulated
+            // episode replays exactly — simulate a few RNG variants, evaluate each by
+            // playing its continuation to the end, and commit the best episode verbatim.
+            if (knobs.episodeSeeds > 0 && random != null) {
+                val area = game.width * game.height
+                val endgameNow = area - game.score <= maxOf(8, area / knobs.endgameDivisor)
+                if (endgameNow) {
+                    episodePlan(game, board)?.let { plan ->
+                        episodeCommits++
+                        pendingEscape = null
+                        return commit(board, plan, Commitment.FOOD)
+                    }
+                }
+            }
         }
 
         // Timed commitments (food walks, escapes) are followed unconditionally — their
@@ -156,8 +191,18 @@ class SafeGreedyStrategy(
             val deadNow = board.deadFreeCells()
             val undigestibleNow = if (endgame) board.undigestibleHolesNow(knobs.digestSlack) else 0
             // Fragmentation ranking only matters where the trajectory loop is rigid; in the
-            // open midgame it just displaces the better-shaped hugging path.
-            val ranked = if (endgame) {
+            // open midgame it just displaces the better-shaped hugging path. With learned
+            // value weights the endgame ranking is by predicted outcome instead.
+            val weights = knobs.valueWeights
+            val ranked = if (endgame && weights != null) {
+                val scratch = DoubleArray(BoardSearch.FEATURES)
+                candidates.sortedByDescending { candidate ->
+                    board.loopFeatures(candidate.postBody, scratch)
+                    var value = 0.0
+                    for (i in scratch.indices) value += weights[i] * scratch[i]
+                    value
+                }
+            } else if (endgame) {
                 candidates.sortedWith(
                     compareBy({ it.undigestible }, { it.components }, { it.deadCells }, { it.path.size })
                 )
@@ -179,14 +224,16 @@ class SafeGreedyStrategy(
             var accepted = ranked.firstOrNull { it.staticSafe && guarded(it) }
                 ?: ranked.firstOrNull { it.safe && guarded(it) }
 
-            // Spawn lookahead at the freeze point: the next spawn is a lottery over the
-            // remaining free cells, so among acceptable walks prefer the one that leaves
-            // the fewest provably-inedible spawn cells (phase enumeration with the real
-            // eat machinery, not the digestibility formula). Runs once per actual eat.
-            if (accepted != null && endgame && freeCells <= knobs.minimaxFree) {
-                val pool = ranked.filter { it.staticSafe && guarded(it) }.take(6)
+            // Monte-Carlo eat selection at the freeze point: with few cells left a full
+            // rollout to the end of the game is cheap, so the candidate is picked by the
+            // expected final score over real-engine simulations with random future spawns
+            // — the only evaluator that sees the compounded long-horizon consequences.
+            if (accepted != null && endgame && knobs.rolloutFree > 0 &&
+                freeCells <= knobs.rolloutFree
+            ) {
+                val pool = ranked.filter { it.staticSafe && guarded(it) }.take(5)
                 if (pool.size > 1) {
-                    val best = pool.minBy { spawnBadCells(board, it) }
+                    val best = pool.maxBy { rolloutValue(game, board, it) }
                     if (best !== accepted) minimaxFallbacks++
                     accepted = best
                 }
@@ -205,6 +252,11 @@ class SafeGreedyStrategy(
 
             if (accepted != null) {
                 if (!accepted.staticSafe) timedCommits++
+                eatObserver?.takeIf { endgame }?.let { observer ->
+                    val features = DoubleArray(BoardSearch.FEATURES)
+                    board.loopFeatures(accepted.postBody, features)
+                    observer(features)
+                }
                 pendingEscape = if (accepted.staticSafe) null else accepted.escapePlan
                 return commit(board, accepted.path, Commitment.FOOD)
             }
@@ -260,8 +312,10 @@ class SafeGreedyStrategy(
             commitStep(game, board)?.let { return it }
         }
 
+        val chaosHere = knobs.chaosStall &&
+            (if (endgame) knobs.chaosEndgame else knobs.chaosMidgame)
         val stallPath = board.longestPathToTail(
-            directionBias = if (knobs.chaosStall) random?.nextInt(4) ?: 0 else 0,
+            directionBias = if (chaosHere) random?.nextInt(4) ?: 0 else 0,
             avoidAroundFood = knobs.avoidAroundFood,
         )
         if (stallPath != null && stallPath.size > 1) {
@@ -282,17 +336,116 @@ class SafeGreedyStrategy(
         return fallback(game, board, game.heading)
     }
 
-    /** Number of free cells of the candidate's post-eat loop with no provable future eat. */
-    private fun spawnBadCells(board: BoardSearch, candidate: Candidate): Int {
-        if (candidate.postBody.size == board.width * board.height) return 0
-        val inBody = HashSet<Int>(candidate.postBody.size * 2)
-        candidate.postBody.forEach { inBody.add(it) }
-        var bad = 0
-        for (cell in 0 until board.width * board.height) {
-            if (cell in inBody) continue
-            if (!board.futureFoodEdible(candidate.postBody, cell)) bad++
+    /**
+     * Simulates [SafeGreedyKnobs.episodeSeeds] own-RNG variants of the current food
+     * episode; returns the head-cell walk (exact replay) of the variant whose full-game
+     * continuation scored best, or null when every variant died before eating.
+     */
+    private fun episodePlan(game: GameView, board: BoardSearch): IntArray? {
+        val body = game.snake.toList()
+        var bestValue = Double.NEGATIVE_INFINITY
+        var bestWalk: IntArray? = null
+        // Common random numbers: identical continuation seeds across episode variants —
+        // future-spawn noise correlates and cancels in the comparison.
+        val continuationSeeds = LongArray(knobs.episodeRollouts) { random!!.nextLong() }
+
+        repeat(knobs.episodeSeeds) {
+            val seed = random!!.nextLong()
+            val sim = org.grakovne.snake.agent.core.SnakeGame(
+                org.grakovne.snake.agent.core.GameConfig(
+                    width = game.width,
+                    height = game.height,
+                    seed = seed,
+                    maxStepsWithoutFood = game.starvationLimit,
+                ),
+                initialBody = body,
+                initialFood = game.food,
+            )
+            val policy = SafeGreedyStrategy(
+                timeAware = false,
+                guardHoles = true,
+                random = kotlin.random.Random(seed),
+                knobs = knobs.copy(episodeSeeds = 0, rolloutFree = 0, valueWeights = null),
+            )
+            // exact part: play the episode until the eat (no spawn happens before it)
+            val walk = ArrayList<Int>(256)
+            walk.add(board.index(sim.head))
+            val startScore = sim.score
+            while (sim.status == org.grakovne.snake.agent.core.GameStatus.RUNNING &&
+                sim.score == startScore
+            ) {
+                sim.step(policy.nextMove(sim))
+                walk.add(board.index(sim.head))
+            }
+            if (sim.score == startScore) return@repeat   // died without eating
+            // noisy part: value the post-eat state by averaged paired continuations
+            val value = if (sim.status == org.grakovne.snake.agent.core.GameStatus.RUNNING) {
+                rolloutMean(game, sim.snake.toList(), continuationSeeds)
+            } else {
+                sim.score.toDouble()
+            }
+            if (value > bestValue) {
+                bestValue = value
+                bestWalk = walk.toIntArray()
+            }
         }
-        return bad
+        return bestWalk?.takeIf { it.size > 1 }
+    }
+
+    /** Mean final score over paired continuations from a state. */
+    private fun rolloutMean(game: GameView, body: List<Position>, seeds: LongArray): Double {
+        var total = 0.0
+        for (seed in seeds) {
+            val rollout = org.grakovne.snake.agent.core.SnakeGame(
+                org.grakovne.snake.agent.core.GameConfig(
+                    width = game.width,
+                    height = game.height,
+                    seed = seed,
+                    maxStepsWithoutFood = game.starvationLimit,
+                ),
+                initialBody = body,
+            )
+            val policy = SafeGreedyStrategy(
+                timeAware = false,
+                guardHoles = true,
+                random = kotlin.random.Random(seed),
+                knobs = knobs.copy(episodeSeeds = 0, rolloutFree = 0, valueWeights = null),
+            )
+            while (rollout.status == org.grakovne.snake.agent.core.GameStatus.RUNNING) {
+                rollout.step(policy.nextMove(rollout))
+            }
+            total += rollout.score
+        }
+        return total / seeds.size
+    }
+
+    /** Mean final score of real-engine rollouts from the candidate's post-eat state. */
+    private fun rolloutValue(game: GameView, board: BoardSearch, candidate: Candidate): Double {
+        val body = candidate.postBody.map { Position(it % board.width, it / board.width) }
+        var total = 0.0
+        repeat(knobs.rolloutCount) {
+            val seed = random?.nextLong() ?: it.toLong()
+            val rollout = org.grakovne.snake.agent.core.SnakeGame(
+                org.grakovne.snake.agent.core.GameConfig(
+                    width = game.width,
+                    height = game.height,
+                    seed = seed,
+                    maxStepsWithoutFood = game.starvationLimit,
+                ),
+                initialBody = body,
+            )
+            val policy = SafeGreedyStrategy(
+                timeAware = false,
+                guardHoles = true,
+                random = kotlin.random.Random(seed),
+                knobs = knobs.copy(rolloutFree = 0, valueWeights = null),
+            )
+            while (rollout.status == org.grakovne.snake.agent.core.GameStatus.RUNNING) {
+                rollout.step(policy.nextMove(rollout))
+            }
+            total += rollout.score
+        }
+        return total / knobs.rolloutCount
     }
 
     /**
