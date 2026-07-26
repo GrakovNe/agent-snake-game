@@ -155,10 +155,14 @@ class BoardSearch(val width: Int, val height: Int) {
                 undigestible++
                 continue
             }
+            // Digestible iff two neighbors are free simultaneously at some phase of the
+            // loop: each body cell is free for `gap` ticks after it vacates, so the free
+            // intervals [b_i, b_i+gap) and [b_j, b_j+gap) must overlap. That is when a
+            // static path into the hole and an exit both exist and acceptance fires.
             for (i in 0 until bodies) {
-                for (j in 0 until bodies) {
-                    if (i == j) continue
-                    if ((bodyNeighbors[i] + 2 - bodyNeighbors[j]).mod(loop) < gap) continue@cells
+                for (j in i + 1 until bodies) {
+                    val forward = (bodyNeighbors[i] - bodyNeighbors[j]).mod(loop)
+                    if (forward < gap || loop - forward < gap) continue@cells
                 }
             }
             undigestible++
@@ -218,6 +222,91 @@ class BoardSearch(val width: Int, val height: Int) {
             if (next != -1 && vacate[next] == 0) return false
         }
         return true
+    }
+
+    class HuntPlan(
+        /** current head -> W loop-follow cells -> timed walk ending on the food */
+        val path: IntArray,
+        /** post-eat escape walk, null when eating fills the board */
+        val escape: IntArray?,
+        val undigestible: Int,
+        val wait: Int,
+    )
+
+    /**
+     * Exhaustive phase search for eating food stuck in a hole or pocket. Requires the
+     * snake to sit in a closed loop (head adjacent to tail — the frozen-endgame shape):
+     * then waiting W ticks by following the loop merely rotates the vacate schedule, so
+     * every possible entry phase can be enumerated exactly in one pass. For each W a
+     * timed walk to the food plus a verified escape is attempted on the rotated schedule;
+     * the best plan (fewest undigestible holes after eating) is returned.
+     */
+    fun bestHuntPlan(body: IntArray): HuntPlan? {
+        val loop = body.size
+        if (!adjacent(body[0], body[loop - 1])) return null
+
+        var best: HuntPlan? = null
+        val rotated = IntArray(loop)
+        for (wait in 0 until loop) {
+            for (i in 0 until loop) {
+                rotated[i] = body[(i - wait).mod(loop)]
+            }
+
+            java.util.Arrays.fill(scratchVacate, 0)
+            for (i in 0 until loop) {
+                scratchVacate[rotated[i]] = loop - i
+            }
+            val walk = bfs(
+                scratchVacate, rotated[0], foodIdx,
+                timeAware = true, margin = 0, blockFood = false, targetWalkable = false,
+            ) ?: continue
+
+            val postBody = bodyAfterEatingBody(rotated, walk)
+            var escape: IntArray? = null
+            if (postBody.size < size) {
+                escape = escapePlanFor(postBody, timeAware = true, avoidFree = true)
+                    ?.takeIf { it.size > 1 }
+                    ?: escapePlanFor(postBody, timeAware = true, avoidFree = false)
+                if (escape == null || escape.size < 2) continue
+                if (!tailReachableFor(bodyAfterWalk(postBody, escape), timeAware = false)) continue
+            }
+
+            val undigestible = undigestibleHoles(postBody)
+            if (best == null || undigestible < best.undigestible) {
+                val path = IntArray(1 + wait + walk.size - 1)
+                path[0] = body[0]
+                for (j in 0 until wait) {
+                    path[1 + j] = body[loop - 1 - j]
+                }
+                System.arraycopy(walk, 1, path, 1 + wait, walk.size - 1)
+                best = HuntPlan(path, escape, undigestible, wait)
+                if (undigestible == 0) return best
+            }
+        }
+        return best
+    }
+
+    /** [bodyAfterEating] for a body given as cell indices. */
+    fun bodyAfterEatingBody(body: IntArray, path: IntArray): IntArray {
+        val newLength = body.size + 1
+        val result = IntArray(newLength)
+        var written = 0
+        for (i in path.indices.reversed()) {
+            if (written == newLength) break
+            result[written++] = path[i]
+        }
+        var bodyIndex = 1
+        while (written < newLength) {
+            result[written++] = body[bodyIndex++]
+        }
+        return result
+    }
+
+    private fun adjacent(a: Int, b: Int): Boolean {
+        for (direction in 0 until 4) {
+            if (neighbor(a, direction) == b) return true
+        }
+        return false
     }
 
     /** Number of connected components of free cells for the given body (head-first indices). */
@@ -413,20 +502,47 @@ class BoardSearch(val width: Int, val height: Int) {
      * sweep free cells on the way. Used in the endgame, where eating along a sweeping route
      * consumes would-be holes instead of stranding them.
      */
-    fun longestPathToFood(directionBias: Int = 0): IntArray? {
+    fun longestPathToFood(directionBias: Int = 0, rng: kotlin.random.Random? = null): IntArray? {
         val base = bfs(
             vacate, headIdx, foodIdx,
             timeAware = false, margin = 0, blockFood = false, targetWalkable = false,
         ) ?: return null
-        return extend(base, directionBias, blockFood = false)
+        return extend(base, directionBias, blockFood = false, rng = rng)
     }
 
-    /** Stretches [base] by pulling free 2-cell detours into it until no extension fits. */
+    /**
+     * All intermediate shapes of an extension run: the shortest food path, then the path
+     * after every extra detour, up to the maximal sweep. The optimal eating walk is
+     * usually one of these intermediates — collecting them multiplies the candidate pool
+     * with genuinely diverse shapes at the cost of a single extension run.
+     */
+    fun foodPathSnapshots(rng: kotlin.random.Random?, limit: Int, collect: (IntArray) -> Unit) {
+        val base = bfs(
+            vacate, headIdx, foodIdx,
+            timeAware = false, margin = 0, blockFood = false, targetWalkable = false,
+        ) ?: return
+        collect(base)
+        var collected = 1
+        extend(base, directionBias = 0, blockFood = false, rng = rng) { snapshot ->
+            if (collected < limit) {
+                collect(snapshot)
+                collected++
+            }
+        }
+    }
+
+    /**
+     * Stretches [base] by pulling free 2-cell detours into it until no extension fits.
+     * With [rng] each detour is picked randomly among the fitting ones, which produces
+     * genuinely diverse sweep shapes instead of four near-identical rotations.
+     */
     private fun extend(
         base: IntArray,
         directionBias: Int,
         blockFood: Boolean,
         avoid: BooleanArray? = null,
+        rng: kotlin.random.Random? = null,
+        onSnapshot: ((IntArray) -> Unit)? = null,
     ): IntArray {
         val path = ArrayList<Int>(base.size)
         base.forEach { path.add(it) }
@@ -437,25 +553,33 @@ class BoardSearch(val width: Int, val height: Int) {
             cell != -1 && !onPath[cell] && vacate[cell] == 0 &&
                 (!blockFood || cell != foodIdx) && (avoid == null || !avoid[cell])
 
+        val options = IntArray(4)
         var i = 0
         while (i < path.size - 1) {
             val a = path[i]
             val b = path[i + 1]
-            var extended = false
+            var found = 0
             for (rotation in 0 until 4) {
                 val direction = (rotation + directionBias) and 3
                 val c = neighbor(a, direction)
                 val d = neighbor(b, direction)
                 if (extendable(c) && extendable(d)) {
-                    path.add(i + 1, d)
-                    path.add(i + 1, c)
-                    onPath[c] = true
-                    onPath[d] = true
-                    extended = true
-                    break
+                    options[found++] = direction
+                    if (rng == null) break
                 }
             }
-            if (!extended) i++
+            if (found > 0) {
+                val direction = options[if (rng != null) rng.nextInt(found) else 0]
+                val c = neighbor(a, direction)
+                val d = neighbor(b, direction)
+                path.add(i + 1, d)
+                path.add(i + 1, c)
+                onPath[c] = true
+                onPath[d] = true
+                onSnapshot?.invoke(path.toIntArray())
+            } else {
+                i++
+            }
         }
         return path.toIntArray()
     }

@@ -31,7 +31,7 @@ fun registerRun(name: String, mainClassName: String, description: String) =
         classpath = sourceSets["main"].runtimeClasspath
         listOf(
             "size", "games", "seed", "delay", "strategy", "parallelism",
-            "huntDump", "autopsy", "autopsyEvery",
+            "huntDump", "autopsy", "autopsyEvery", "undig",
         ).forEach { key ->
             (project.findProperty(key) as? String)?.let { systemProperty(key, it) }
         }
@@ -51,6 +51,11 @@ registerRun(
     "probe",
     "org.grakovne.snake.agent.app.ProbeKt",
     "Dump terminal boards of lost games: ./gradlew probe -Psize=15 -Pgames=30 -Pstrategy=safe"
+)
+registerRun(
+    "tune",
+    "org.grakovne.snake.agent.app.TuneKt",
+    "Knob search over SafeGreedy configs: ./gradlew tune -Psize=15 -Pgames=200"
 )
 registerRun(
     "arena",

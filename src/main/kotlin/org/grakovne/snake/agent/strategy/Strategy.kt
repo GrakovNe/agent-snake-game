@@ -23,8 +23,19 @@ object Strategies {
         "safetime" -> SafeGreedyStrategy(timeAware = true)
         "hug" -> SafeGreedyStrategy(timeAware = false, hugging = true)
         "band" -> SafeGreedyStrategy(timeAware = false, hugging = true, guardHoles = true, random = random)
+        // Tournament champion (tune rounds 1-5): no midgame stall commitment, no
+        // food-perimeter avoidance, no midgame dead-cell guard, no first-line timed
+        // candidate; endgame digestibility guard and sweeps on.
         "sweep" -> SafeGreedyStrategy(
-            timeAware = false, hugging = true, guardHoles = true, random = random, sweepEndgame = true,
+            timeAware = false,
+            guardHoles = true,
+            random = random,
+            knobs = SafeGreedyKnobs(
+                stallCommitMidgame = false,
+                avoidAroundFood = false,
+                guardDeadCells = false,
+                timedCandidate = false,
+            ),
         )
         else -> error("unknown strategy '$name', available: $names")
     }
