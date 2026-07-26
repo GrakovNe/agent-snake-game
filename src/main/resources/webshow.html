@@ -72,6 +72,35 @@ const canvas = document.getElementById('board');
 const ctx = canvas.getContext('2d');
 let frame = null;
 
+// Soft intro for new viewers: play the stream at 0.4x for the first seconds,
+// then catch up to live at 1.6x (per-client timeshift; the broadcast itself
+// is untouched). The frame queue also smooths out network jitter.
+const queue = [];
+let joinedAt = null;
+let streamClock = 0;      // consumed stream time, ms
+let lastTick = performance.now();
+const FRAME_MS = 40;      // broadcast cadence
+const INTRO_MS = 5000;
+
+function playbackRate() {
+  const sinceJoin = performance.now() - joinedAt;
+  if (sinceJoin < INTRO_MS) return 0.4;
+  return queue.length > 2 ? 1.6 : 1.0;
+}
+
+function consume() {
+  const now = performance.now();
+  if (joinedAt !== null && queue.length > 0) {
+    streamClock += (now - lastTick) * playbackRate();
+    while (queue.length > 0 && streamClock >= FRAME_MS) {
+      frame = queue.shift();
+      streamClock -= FRAME_MS;
+    }
+    if (queue.length > 200) queue.splice(0, queue.length - 50);  // never lag far behind
+  }
+  lastTick = now;
+}
+
 function hsv(h, s, v) {
   const i = Math.floor(h * 6), f = h * 6 - i;
   const p = v * (1 - s), q = v * (1 - f * s), t = v * (1 - (1 - f) * s);
@@ -91,6 +120,7 @@ const footerEl = document.querySelector('.footer');
 
 function draw() {
   requestAnimationFrame(draw);
+  consume();
   if (!frame) return;
   const { w, h, b, f, st } = frame;
 
@@ -146,7 +176,10 @@ function draw() {
   headerEl.style.width = bw + 'px';
 }
 
-new EventSource('/events').onmessage = e => { frame = JSON.parse(e.data); };
+new EventSource('/events').onmessage = e => {
+  if (joinedAt === null) { joinedAt = performance.now(); lastTick = joinedAt; }
+  queue.push(JSON.parse(e.data));
+};
 requestAnimationFrame(draw);
 </script>
 </body>
