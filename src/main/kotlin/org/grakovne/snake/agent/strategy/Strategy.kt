@@ -16,7 +16,7 @@ fun interface Strategy {
 object Strategies {
     val names = listOf(
         "greedy", "random", "safe", "safetime", "hug", "band",
-        "sweep", "learned", "mc", "sweepMidChaos", "sweepEndChaos", "episodes",
+        "sweep", "learned", "mc", "sweepMidChaos", "sweepEndChaos", "episodes", "neural",
     )
 
     fun create(name: String, random: Random = Random.Default): Strategy = when (name) {
@@ -51,6 +51,17 @@ object Strategies {
                 episodeSeeds = intProp("episodeSeeds", 4),
                 episodeRollouts = intProp("episodeRollouts", 3),
                 episodeFree = intProp("episodeFree", 40),
+            ),
+        )
+        // Episode search with the ONNX value net instead of continuation rollouts.
+        "neural" -> SafeGreedyStrategy(
+            timeAware = false, guardHoles = true, random = random,
+            knobs = SafeGreedyKnobs(
+                stallCommitMidgame = false, avoidAroundFood = false,
+                guardDeadCells = false, timedCandidate = false,
+                episodeSeeds = intProp("episodeSeeds", 4),
+                episodeFree = intProp("episodeFree", 40),
+                valueNetPath = prop("valueNet", "data/value-net.onnx"),
             ),
         )
         // Variance-attribution variants: chaos only in one phase.
@@ -102,6 +113,9 @@ object Strategies {
 
     private fun intProp(name: String, default: Int): Int =
         System.getProperty(name)?.toInt() ?: default
+
+    private fun prop(name: String, default: String): String =
+        System.getProperty(name) ?: default
 
     private var cachedWeights: DoubleArray? = null
 

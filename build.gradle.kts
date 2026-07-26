@@ -12,6 +12,7 @@ repositories {
 dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2")
     implementation("org.jfree:jfreechart:1.5.5")
+    implementation("com.microsoft.onnxruntime:onnxruntime:1.20.0")
     testImplementation(kotlin("test"))
 }
 
@@ -34,7 +35,7 @@ fun registerRun(name: String, mainClassName: String, description: String) =
             "huntDump", "autopsy", "autopsyEvery", "undig",
             "rolloutFree", "rolloutCount", "rngSpread",
             "episodeSeeds", "episodeRollouts", "episodeFree",
-            "seedFrom", "rollouts", "out",
+            "seedFrom", "rollouts", "out", "valueNet",
         ).forEach { key ->
             (project.findProperty(key) as? String)?.let { systemProperty(key, it) }
         }

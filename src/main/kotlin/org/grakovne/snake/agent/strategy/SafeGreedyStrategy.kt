@@ -73,6 +73,8 @@ data class SafeGreedyKnobs(
     val episodeRollouts: Int = 1,
     /** run episode search only when freeCells <= this (0 = at the endgame boundary) */
     val episodeFree: Int = 0,
+    /** ONNX value net path: replaces continuation rollouts in the episode search */
+    val valueNetPath: String? = null,
 )
 
 class SafeGreedyStrategy(
@@ -388,11 +390,20 @@ class SafeGreedyStrategy(
                 walk.add(board.index(sim.head))
             }
             if (sim.score == startScore) return@repeat   // died without eating
-            // noisy part: value the post-eat state by averaged paired continuations
-            val value = if (sim.status == org.grakovne.snake.agent.core.GameStatus.RUNNING) {
-                rolloutMean(game, sim.snake.toList(), continuationSeeds)
-            } else {
+            // value the post-eat state: the trained net in one forward pass, or averaged
+            // paired continuation rollouts when no net is configured
+            val value = if (sim.status != org.grakovne.snake.agent.core.GameStatus.RUNNING) {
                 sim.score.toDouble()
+            } else if (knobs.valueNetPath != null) {
+                val net = org.grakovne.snake.agent.strategy.value.ValueNet.sharedFor(
+                    knobs.valueNetPath, game.width, game.height,
+                )
+                val postBody = IntArray(sim.snake.size) { i ->
+                    sim.snake[i].y * game.width + sim.snake[i].x
+                }
+                game.width * game.height - net.predictDeficit(postBody)
+            } else {
+                rolloutMean(game, sim.snake.toList(), continuationSeeds)
             }
             if (value > bestValue) {
                 bestValue = value
