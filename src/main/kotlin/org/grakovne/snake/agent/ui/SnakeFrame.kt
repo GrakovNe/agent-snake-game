@@ -112,10 +112,13 @@ class SnakeFrame(private val fieldWidth: Int, private val fieldHeight: Int) {
                 )
             }
 
+            // Beads stay beads, but consecutive segments touch through a narrow
+            // neck — enough continuity to read as one body, without merging cells.
             val n = snap.body.size
             for (i in n - 1 downTo 1) {
                 g2.color = bodyColor(i.toFloat() / n)
                 g2.fill(cellRect(snap.body[i]))
+                neck(g2, snap.body[i], snap.body[i - 1], x0, y0, cell, gap)
             }
             g2.color = HEAD
             g2.fill(cellRect(snap.body[0]))
@@ -169,6 +172,21 @@ class SnakeFrame(private val fieldWidth: Int, private val fieldHeight: Int) {
     /** Kept for the runner's lifecycle; the show needs no per-game bookkeeping. */
     @Suppress("UNUSED_PARAMETER")
     fun newGame(round: Long, strategy: String, seed: Long) = Unit
+
+    /** Narrow bridge between two adjacent body cells (about half the cell wide). */
+    private fun neck(g2: Graphics2D, a: Int, b: Int, x0: Int, y0: Int, cell: Int, gap: Int) {
+        if (gap == 0) return
+        val thickness = ((cell - 2 * gap) * 0.5f).toInt().coerceAtLeast(2)
+        val inset = (cell - thickness) / 2
+        val ax = x0 + (a % fieldWidth) * cell
+        val ay = y0 + (a / fieldWidth) * cell
+        val bx = x0 + (b % fieldWidth) * cell
+        val by = y0 + (b / fieldWidth) * cell
+        when {
+            ay == by -> g2.fillRect(minOf(ax, bx) + cell - gap - 1, ay + inset, 2 * gap + 2, thickness)
+            ax == bx -> g2.fillRect(ax + inset, minOf(ay, by) + cell - gap - 1, thickness, 2 * gap + 2)
+        }
+    }
 
     private fun bodyColor(t: Float): Color {
         val hue = 0.53f + 0.09f * t
