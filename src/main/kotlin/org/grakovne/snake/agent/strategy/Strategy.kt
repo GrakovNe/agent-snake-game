@@ -19,6 +19,7 @@ object Strategies {
         "sweep", "learned", "mc", "sweepMidChaos", "sweepEndChaos",
         "episodes", "neural", "neuralstall", "repairguard", "holerank",
         "band2", "lanes", "laneband",
+        "chor0", "chor0e", "sortstall", "sorteats",
     )
 
     fun create(name: String, random: Random = Random.Default): Strategy = when (name) {
@@ -78,6 +79,50 @@ object Strategies {
                 stallCommitMidgame = false, avoidAroundFood = false,
                 guardDeadCells = false, timedCandidate = false,
                 laneBias = true, bandFree = intProp("bandFree", 60),
+            ),
+        )
+        // Choreography v0: follow the shape instead of evaluating positions.
+        // Committed serpentine stall walks in the midgame (deterministic bias 0,
+        // no chaos), serpentine eat-walks; endgame keeps per-tick chaotic replans
+        // (measured load-bearing). Untested combo: every band/lane variant so far
+        // ran on top of CHAOTIC stalling.
+        "chor0" -> SafeGreedyStrategy(
+            timeAware = false, guardHoles = true, random = random,
+            knobs = SafeGreedyKnobs(
+                stallCommitMidgame = true, chaosMidgame = false,
+                avoidAroundFood = false, guardDeadCells = false,
+                timedCandidate = false, laneBias = true,
+            ),
+        )
+        // chor0 discipline + endgame episode seed search (champion working point).
+        "chor0e" -> SafeGreedyStrategy(
+            timeAware = false, guardHoles = true, random = random,
+            knobs = SafeGreedyKnobs(
+                stallCommitMidgame = true, chaosMidgame = false,
+                avoidAroundFood = false, guardDeadCells = false,
+                timedCandidate = false, laneBias = true,
+                episodeSeeds = intProp("episodeSeeds", 4),
+                episodeRollouts = intProp("episodeRollouts", 3),
+                episodeFree = intProp("episodeFree", 40),
+            ),
+        )
+        // Champion knobs + sorting-stall: per-tick replan kept, but the four stall
+        // shapes are judged by free-space fragmentation at walk end instead of a die.
+        "sortstall" -> SafeGreedyStrategy(
+            timeAware = false, guardHoles = true, random = random,
+            knobs = SafeGreedyKnobs(
+                stallCommitMidgame = false, avoidAroundFood = false,
+                guardDeadCells = false, timedCandidate = false,
+                sortStall = true,
+            ),
+        )
+        // Champion knobs + midgame eat-walk ranking by post-eat fragmentation.
+        "sorteats" -> SafeGreedyStrategy(
+            timeAware = false, guardHoles = true, random = random,
+            knobs = SafeGreedyKnobs(
+                stallCommitMidgame = false, avoidAroundFood = false,
+                guardDeadCells = false, timedCandidate = false,
+                sortEats = true,
             ),
         )
         // Champion with isolated-hole count as the primary endgame objective

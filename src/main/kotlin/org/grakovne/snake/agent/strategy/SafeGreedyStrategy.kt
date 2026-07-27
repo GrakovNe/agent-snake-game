@@ -85,6 +85,11 @@ data class SafeGreedyKnobs(
     val bandFree: Int = 0,
     /** lane-biased (serpentine) path reconstruction */
     val laneBias: Boolean = false,
+    /** Sorting-stall: pick the stall shape minimizing free-space fragmentation
+     *  at walk end — the "sort holes to one side while the field is plastic" bet. */
+    val sortStall: Boolean = false,
+    /** Rank midgame eat-walks by post-eat free-space fragmentation (holes are born at eats). */
+    val sortEats: Boolean = false,
 )
 
 class SafeGreedyStrategy(
@@ -254,6 +259,8 @@ class SafeGreedyStrategy(
                 candidates.sortedWith(
                     compareBy({ it.undigestible }, { it.components }, { it.deadCells }, { it.path.size })
                 )
+            } else if (knobs.sortEats) {
+                candidates.sortedWith(compareBy({ it.components }, { it.path.size }))
             } else {
                 candidates
             }
@@ -373,6 +380,31 @@ class SafeGreedyStrategy(
         //   drift into, and reshaping the trajectory explores vacate schedules.
         if (knobs.stallCommitMidgame && !endgame && committedKind == Commitment.STALL) {
             commitStep(game, board)?.let { return it }
+        }
+
+        if (knobs.sortStall && !endgame) {
+            // Sorting as a filter, not a dictator: keep the chaos coin, but flip it
+            // only among the stall shapes with minimal free-space fragmentation.
+            val body = bodyIndices(game, board)
+            var bestFrag = Int.MAX_VALUE
+            val argmin = ArrayList<IntArray>(4)
+            for (bias in 0 until 4) {
+                val p = board.longestPathToTail(
+                    directionBias = bias,
+                    avoidAroundFood = knobs.avoidAroundFood,
+                ) ?: continue
+                if (p.size < 2) continue
+                val frag = board.freeComponentsFor(board.bodyAfterWalk(body, p))
+                if (frag < bestFrag) {
+                    bestFrag = frag
+                    argmin.clear()
+                }
+                if (frag == bestFrag) argmin.add(p)
+            }
+            if (argmin.isNotEmpty()) {
+                val pick = argmin[random?.nextInt(argmin.size) ?: 0]
+                return holeGuarded(game, board, step(board, pick[0], pick[1]))
+            }
         }
 
         val chaosHere = knobs.chaosStall &&

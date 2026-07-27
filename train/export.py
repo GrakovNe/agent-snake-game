@@ -13,7 +13,7 @@ src = sys.argv[1] if len(sys.argv) > 1 else "data/value-net.pt"
 dst = sys.argv[2] if len(sys.argv) > 2 else "data/value-net.onnx"
 
 checkpoint = torch.load(src, map_location="cpu", weights_only=True)
-net = ValueNet()
+net = ValueNet(checkpoint.get("channels", 48), checkpoint.get("blocks", 5))
 net.load_state_dict(checkpoint["model"])
 net.eval()
 

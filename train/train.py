@@ -91,6 +91,8 @@ def main():
     parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--val-frac", type=float, default=0.1)
     parser.add_argument("--out", default="data/value-net.pt")
+    parser.add_argument("--channels", type=int, default=48)
+    parser.add_argument("--blocks", type=int, default=5)
     args = parser.parse_args()
 
     rows = load_shards(args.shards)
@@ -113,7 +115,7 @@ def main():
         }
         print(f"{len(group)} samples {w}x{h}; deficit mean={2 * w * y.mean():.2f} std={2 * w * y.std():.2f}")
 
-    net = ValueNet().to(device)
+    net = ValueNet(args.channels, args.blocks).to(device)
     opt = torch.optim.AdamW(net.parameters(), lr=args.lr)
     sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=args.epochs)
     loss_fn = nn.SmoothL1Loss()
@@ -175,7 +177,8 @@ def main():
               + "  ".join(report) + marker)
 
     first = next(iter(sizes))
-    torch.save({"model": best_state or net.state_dict(), "w": first[0], "h": first[1]}, args.out)
+    torch.save({"model": best_state or net.state_dict(), "w": first[0], "h": first[1],
+                "channels": args.channels, "blocks": args.blocks}, args.out)
     print(f"saved {args.out} (best combined val {best_metric:.4f})")
 
 
