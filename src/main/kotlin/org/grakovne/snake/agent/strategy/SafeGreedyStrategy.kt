@@ -159,6 +159,14 @@ class SafeGreedyStrategy(
 
     private fun choose(game: GameView, board: BoardSearch): Direction {
         if (game.food != lastFood) {
+            if (lastFood != null) {
+                // the tick right after ANY eat (episode commits included): the current
+                // body IS the post-eat state — the one true place to observe it
+                val area = game.width * game.height
+                if (area - game.score <= maxOf(8, area / knobs.endgameDivisor)) {
+                    stateObserver?.let { it(bodyIndices(game, board)) }
+                }
+            }
             lastFood = game.food
             huntExhausted = false
 
@@ -297,7 +305,6 @@ class SafeGreedyStrategy(
                     board.loopFeatures(accepted.postBody, features)
                     observer(features)
                 }
-                stateObserver?.takeIf { endgame }?.let { it(accepted.postBody.copyOf()) }
                 bucketObserver?.let { observer ->
                     val fillPct = 100 * accepted.postBody.size / area
                     while (nextBucket < buckets.size && fillPct >= buckets[nextBucket]) {
