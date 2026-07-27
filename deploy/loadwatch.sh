@@ -37,11 +37,6 @@ else
   fi
 fi
 
-# --- Home box (webshow, always-on) ---
-HOME_L=$(ssh -o ConnectTimeout=6 -o BatchMode=yes root@192.168.1.119 \
-  'cut -d" " -f1 /proc/loadavg' 2>/dev/null)
-if [ -z "$HOME_L" ]; then
-  echo "home: UNREACHABLE"
-else
-  echo "home: webshow 24/7, load=$HOME_L (2 vCPU; light tasks only)"
-fi
+# --- Home box: powered off by the user (2026-07-27), do not watch. ---
+# Webshow (snake.grakovne.org) resumes via systemd whenever the box is up again.
+echo "home: not watched (powered off; webshow autostarts on boot)"
