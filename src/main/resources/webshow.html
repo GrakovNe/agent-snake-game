@@ -30,6 +30,12 @@
   .score { font-size: 34px; font-weight: 700; letter-spacing: .5px; }
   .total { font-size: 13px; color: var(--muted); margin-left: 10px; }
   .pct { font-size: 13px; color: var(--muted); margin-left: auto; }
+  .toggle {
+    margin-left: 14px; font-size: 11px; color: var(--muted);
+    background: var(--track); border: none; border-radius: 9px;
+    padding: 3px 10px; cursor: pointer; font-family: inherit;
+  }
+  .toggle:hover { color: var(--text); }
   .bar {
     margin-top: 10px; height: 6px; border-radius: 3px;
     background: var(--track); overflow: hidden;
@@ -58,6 +64,7 @@
       <span class="score" id="score">0</span>
       <span class="total" id="total">/ 0</span>
       <span class="pct" id="pct">0.0%</span>
+      <button class="toggle" id="mode" title="board style"></button>
     </div>
     <div class="bar" id="bar"><div id="fill"></div></div>
   </div>
@@ -109,6 +116,8 @@ function draw() {
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.clearRect(0, 0, bw, bh);
 
+  if (mode === 'classic') { drawClassic(bw, bh, cell); updateHeader(bw); return; }
+
   const inset = cell >= 5 ? Math.max(1, Math.floor(cell * 0.16)) : 0;
   const inner = Math.max(2, cell - 2 * inset);
   const arc = Math.min(8, inner * 0.6);
@@ -136,8 +145,29 @@ function draw() {
     rr(px(f) + inset, py(f) + inset, inner, inner, arc);
   }
 
-  // header
-  const area = w * h, s = frame.s;
+  updateHeader(bw);
+}
+
+// Classic mode: the old project's Swing look — solid gapless squares on white,
+// black body mass, red head, magenta food. Different render, different patterns.
+function drawClassic(bw, bh, cell) {
+  const { w, b, f, st } = frame;
+  const px = i => (i % w) * cell, py = i => Math.floor(i / w) * cell;
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(0, 0, bw, bh);
+  ctx.fillStyle = '#000000';
+  for (let i = b.length - 1; i >= 1; i--) ctx.fillRect(px(b[i]), py(b[i]), cell, cell);
+  ctx.fillStyle = '#ff0000';
+  ctx.fillRect(px(b[0]), py(b[0]), cell, cell);
+  if (st === 'RUNNING') {
+    ctx.fillStyle = '#ff00ff';
+    ctx.fillRect(px(f), py(f), cell, cell);
+  }
+}
+
+function updateHeader(bw) {
+  const { w, h, st, s } = frame;
+  const area = w * h;
   document.getElementById('score').textContent = s.toLocaleString('ru');
   document.getElementById('total').textContent = '/ ' + area.toLocaleString('ru');
   document.getElementById('pct').textContent = (100 * s / area).toFixed(1) + '%';
@@ -146,6 +176,16 @@ function draw() {
     'bar' + (st === 'WON' ? ' won' : st === 'DEAD' ? ' dead' : '');
   headerEl.style.width = bw + 'px';
 }
+
+let mode = localStorage.getItem('boardStyle') || 'pipe';
+const modeBtn = document.getElementById('mode');
+function syncModeBtn() { modeBtn.textContent = mode === 'pipe' ? '⇄ classic' : '⇄ pipe'; }
+modeBtn.onclick = () => {
+  mode = mode === 'pipe' ? 'classic' : 'pipe';
+  localStorage.setItem('boardStyle', mode);
+  syncModeBtn();
+};
+syncModeBtn();
 
 new EventSource('/events').onmessage = e => { frame = JSON.parse(e.data); };
 requestAnimationFrame(draw);
