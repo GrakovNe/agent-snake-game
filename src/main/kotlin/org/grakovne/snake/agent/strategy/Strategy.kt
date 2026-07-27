@@ -19,7 +19,7 @@ object Strategies {
         "sweep", "learned", "mc", "sweepMidChaos", "sweepEndChaos",
         "episodes", "neural", "neuralstall", "repairguard", "holerank",
         "band2", "lanes", "laneband",
-        "chor0", "chor0e", "sortstall", "sorteats",
+        "chor0", "chor0e", "sortstall", "sorteats", "endsolver",
     )
 
     fun create(name: String, random: Random = Random.Default): Strategy = when (name) {
@@ -114,6 +114,16 @@ object Strategies {
                 stallCommitMidgame = false, avoidAroundFood = false,
                 guardDeadCells = false, timedCandidate = false,
                 sortStall = true,
+            ),
+        )
+        // Champion knobs + exact endgame solver in the last solverFree cells.
+        "endsolver" -> SafeGreedyStrategy(
+            timeAware = false, guardHoles = true, random = random,
+            knobs = SafeGreedyKnobs(
+                stallCommitMidgame = false, avoidAroundFood = false,
+                guardDeadCells = false, timedCandidate = false,
+                solverFree = intProp("solverFree", 10),
+                solverBudget = intProp("solverBudget", 150_000),
             ),
         )
         // Champion knobs + midgame eat-walk ranking by post-eat fragmentation.

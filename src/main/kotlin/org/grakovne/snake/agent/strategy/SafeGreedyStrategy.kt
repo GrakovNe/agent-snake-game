@@ -90,6 +90,9 @@ data class SafeGreedyKnobs(
     val sortStall: Boolean = false,
     /** Rank midgame eat-walks by post-eat free-space fragmentation (holes are born at eats). */
     val sortEats: Boolean = false,
+    /** Exact endgame solver: engage when free cells <= solverFree (0 = off). */
+    val solverFree: Int = 0,
+    val solverBudget: Int = 150_000,
 )
 
 class SafeGreedyStrategy(
@@ -151,6 +154,12 @@ class SafeGreedyStrategy(
     private var nextBucket = 0
     private val buckets = intArrayOf(70, 80, 85, 90, 93, 95, 97, 99)
 
+    private var endgameSolver: org.grakovne.snake.agent.strategy.search.EndgameSolver? = null
+    private var lastSolvedFood: Position? = null
+    private var nextSolveAttempt = 0
+    var solverCommits = 0
+        private set
+
     private var huntExhausted = false
     private var lastHuntStep = -1000
     private var lastFood: Position? = null
@@ -211,6 +220,38 @@ class SafeGreedyStrategy(
         val area = game.width * game.height
         val freeCells = area - game.score
         val endgame = freeCells <= maxOf(8, area / knobs.endgameDivisor)
+
+        // Exact endgame search: solve the remaining game instead of guarding it.
+        // One solve per spawn; a failed attempt (busted budget or proven loss)
+        // retries after roughly a lap — a static window may have opened.
+        if (knobs.solverFree > 0 && freeCells <= knobs.solverFree &&
+            game.food != lastSolvedFood && game.steps >= nextSolveAttempt
+        ) {
+            val solver = endgameSolver ?: org.grakovne.snake.agent.strategy.search.EndgameSolver(
+                width = game.width,
+                height = game.height,
+                starvationLimit = game.starvationLimit,
+                nodeBudget = knobs.solverBudget,
+            ).also { endgameSolver = it }
+            val solved = solver.solve(game.snake.toList(), game.food)
+            // Commit only certified wins: value 1.0 means every future spawn branch
+            // reaches the target within the searched model (portfolio walks plus
+            // reshaping stall laps). Anything less is a truncated view — the
+            // ordinary machinery plays uncertified states better.
+            if (solved != null && solved.value >= 0.999) {
+                org.grakovne.snake.agent.strategy.search.EndgameSolver.certified.incrementAndGet()
+                solverCommits++
+                pendingEscape = null
+                if (solved.isStall) {
+                    // play the reshaping lap, then re-solve for the same food
+                    nextSolveAttempt = game.steps + solved.walk.size
+                    return commit(board, solved.walk, Commitment.ESCAPE)
+                }
+                lastSolvedFood = game.food
+                return commit(board, solved.walk, Commitment.FOOD)
+            }
+            nextSolveAttempt = game.steps + maxOf(64, game.score)
+        }
 
         val candidates = buildCandidates(game, board, endgame)
         if (candidates.isNotEmpty()) {

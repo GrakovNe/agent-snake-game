@@ -27,6 +27,7 @@ fun main() {
     val elapsedSeconds = (System.nanoTime() - startedAt) / 1e9
 
     println(evaluation.summary())
+    println(org.grakovne.snake.agent.strategy.search.EndgameSolver.statsLine())
     if (prop("dumpScores", "") == "1") {
         evaluation.results.forEachIndexed { i, r -> println("game $i score ${r.score}") }
     }
