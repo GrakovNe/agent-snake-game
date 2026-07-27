@@ -20,8 +20,12 @@ fun main() {
     println("benchmark: strategy=$strategyName field=${size}x$size games=$games seed=$seed parallelism=$parallelism")
 
     val startedAt = System.nanoTime()
+    val starveMult = intProp("starveMult", 1)
     val evaluation = Arena(parallelism).evaluate(
-        config = GameConfig(width = size, height = size, seed = seed),
+        config = GameConfig(
+            width = size, height = size, seed = seed,
+            maxStepsWithoutFood = size * size * 2 * starveMult,
+        ),
         games = games,
     ) { index -> Strategies.create(strategyName, Random(seed + index)) }
     val elapsedSeconds = (System.nanoTime() - startedAt) / 1e9
