@@ -29,6 +29,9 @@ import kotlin.random.Random
 class ShowmanStrategy(private val random: Random) : Strategy {
 
     companion object {
+        /** Stop band-biasing once this fraction of cells sits on straight runs. */
+        const val BAND_TARGET = 0.55
+
         val steerTried = java.util.concurrent.atomic.AtomicLong()
         val steerOk = java.util.concurrent.atomic.AtomicLong()
         val steerNoChord = java.util.concurrent.atomic.AtomicLong()
@@ -81,7 +84,7 @@ class ShowmanStrategy(private val random: Random) : Strategy {
                     forward = desired
                 }
             }
-            if (random.nextInt(4) == 0) mutate()
+            mutate(towardBands = true)
             forward = forwardOf(head, bodySide).takeIf { it != -1 } ?: forward
         }
 
@@ -122,13 +125,14 @@ class ShowmanStrategy(private val random: Random) : Strategy {
         for (m in intArrayOf(na[n], nb[n])) {
             if (m == head || m == n || m == fwd) continue
             if (!adjacent(m, fwd)) continue
-            swap(head, fwd, n, m)
+            undoLog.clear()
+            loggedSwap(head, fwd, n, m)
             if (singleCycleFrom(head)) return true
             // The swap split the cycle in two. Merging two distinct cycles with
             // one swap always yields a single cycle — find any splice point
             // between the orphan loop and the main loop and stitch them.
             if (repairSplit(head)) return true
-            swap(head, n, fwd, m)   // revert
+            undoAll()
             steerBlocked.incrementAndGet()
             return false
         }
@@ -170,7 +174,7 @@ class ShowmanStrategy(private val random: Random) : Strategy {
                     for (d in intArrayOf(na[c], nb[c])) {
                         if (occupied.get(d) || walkMark[d] != walkStamp) continue
                         if (!adjacent(d, b)) continue
-                        swap(a, b, c, d)
+                        loggedSwap(a, b, c, d)
                         return true
                     }
                 }
@@ -182,8 +186,15 @@ class ShowmanStrategy(private val random: Random) : Strategy {
         return false
     }
 
-    /** One random liveliness mutation among free cells, validated and reverted on split. */
-    private fun mutate() {
+    /**
+     * One random texture mutation among free cells. With [towardBands] the swap
+     * is kept only when it does not reduce the number of straight-through cells
+     * while the cycle is below the target straightness — evolving the tree-cycle
+     * "2x2 brick" texture into long organic lanes, the way an honest bot's body
+     * actually folds. Full maximization would converge back to the lawnmower,
+     * so the bias switches off at [BAND_TARGET].
+     */
+    private fun mutate(towardBands: Boolean) {
         val area = width * height
         val a = random.nextInt(area)
         if (occupied.get(a)) return
@@ -200,11 +211,49 @@ class ShowmanStrategy(private val random: Random) : Strategy {
         for (m in intArrayOf(na[c], nb[c])) {
             if (m == a || m == b || m == c || occupied.get(m)) continue
             if (!adjacent(m, b)) continue
-            swap(a, b, c, m)
-            if (singleCycleFrom(a) || repairSplit(a)) return
-            swap(a, c, b, m)   // revert
+            val before = if (towardBands) straightTotal() else 0
+            undoLog.clear()
+            loggedSwap(a, b, c, m)
+            val intact = singleCycleFrom(a) || repairSplit(a)
+            if (!intact) {
+                undoAll()
+                return
+            }
+            if (towardBands) {
+                val fraction = before.toDouble() / area
+                val biased = fraction < BAND_TARGET
+                if (biased && straightTotal() < before && random.nextInt(8) != 0) {
+                    undoAll()
+                }
+            }
             return
         }
+    }
+
+    /** Cells whose two cycle neighbors are collinear with them. */
+    private fun straightTotal(): Int {
+        var count = 0
+        for (cell in na.indices) {
+            val d1 = cell - na[cell]
+            val d2 = nb[cell] - cell
+            if (d1 == d2) count++
+        }
+        return count
+    }
+
+    private val undoLog = ArrayList<IntArray>(4)
+
+    private fun loggedSwap(p: Int, q: Int, r: Int, s: Int) {
+        undoLog.add(intArrayOf(p, q, r, s))
+        swap(p, q, r, s)
+    }
+
+    private fun undoAll() {
+        for (i in undoLog.indices.reversed()) {
+            val (p, q, r, s) = undoLog[i]
+            swap(p, r, q, s)
+        }
+        undoLog.clear()
     }
 
     /** Replace edges {p,q} and {r,s} with {p,r} and {q,s}. Caller validates. */
@@ -307,6 +356,7 @@ class ShowmanStrategy(private val random: Random) : Strategy {
         require(w % 2 == 0 && h % 2 == 0) { "showman needs even board dimensions" }
         width = w
         height = h
+        occupied.clear()
         val area = w * h
         na = IntArray(area) { -1 }
         nb = IntArray(area) { -1 }
@@ -375,6 +425,9 @@ class ShowmanStrategy(private val random: Random) : Strategy {
                 }
             }
         }
+
+        // Evolve the brick texture into organic lanes before the game starts.
+        repeat(12_000) { mutate(towardBands = true) }
     }
 
     private fun direction(from: Int, to: Int): Direction = when (to - from) {
