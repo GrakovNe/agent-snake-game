@@ -39,11 +39,12 @@ fun main() {
             strategy = Strategies.create(strategyName, Random(seed)),
         ) { game ->
             server.render(game)
-            // Finale slow-motion; and with zero viewers the engine idles at 250 tps —
-            // a 24/7 box burns almost nothing until someone actually opens the page.
-            val watchedTps = if (server.viewers() == 0) 250 else tps
+            // Zero viewers: pause the game outright — the 24/7 box burns nothing
+            // until someone opens the page, and the show resumes mid-frame.
+            while (server.viewers() == 0) Thread.sleep(500)
+            // Finale slow-motion, same feel as the desktop show.
             val free = area - game.score
-            val effectiveTps = if (free > 50) watchedTps else maxOf(250, watchedTps * free / 50)
+            val effectiveTps = if (free > 50) tps else maxOf(250, tps * free / 50)
             val sleepEvery = maxOf(1, effectiveTps / 1000)
             if (effectiveTps < 1_000_000 && game.steps % sleepEvery == 0) Thread.sleep(1)
         }
