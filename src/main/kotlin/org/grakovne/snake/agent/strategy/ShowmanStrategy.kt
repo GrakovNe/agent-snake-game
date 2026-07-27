@@ -47,6 +47,11 @@ class ShowmanStrategy(private val random: Random) : Strategy {
     private var nb = IntArray(0)
 
     private val occupied = java.util.BitSet()
+    // The honest champion as a runtime oracle: every tick the showman asks what
+    // the real bot would play and steers the cycle toward exactly that step.
+    // The visible trajectory IS honest play (stalls, hunts, hugging walks and
+    // all) wherever rewiring succeeds; the cycle is an invisible safety net.
+    private var oracle: Strategy? = null
     private var dist = IntArray(0)
     private var queue = IntArray(0)
     private var walkMark = IntArray(0)
@@ -57,6 +62,7 @@ class ShowmanStrategy(private val random: Random) : Strategy {
         if (na.size != game.width * game.height) {
             buildCycle(game.width, game.height)
             cameFrom = -1
+            oracle = Strategies.create("sweep", Random(random.nextLong()))
         }
 
         occupied.clear()
@@ -72,19 +78,35 @@ class ShowmanStrategy(private val random: Random) : Strategy {
 
         var forward = forwardOf(head, bodySide)
 
+        // The oracle is stateful: consult it every tick so its plans track the
+        // real game, even on ticks where we cannot follow its advice.
+        val oracleDir = oracle?.nextMove(game)
+        val desired = oracleDir?.let {
+            val nx = head % width + it.dx
+            val ny = head / width + it.dy
+            if (nx < 0 || ny < 0 || nx >= width || ny >= height) -1 else ny * width + nx
+        } ?: -1
+
         // Rewiring freeze half a lap before the starvation limit could matter.
         if (game.stepsSinceFood < area / 2 && forward != -1) {
-            val desired = greedyStep(game, head)
             if (desired == -1) {
                 noDesired.incrementAndGet()
             } else if (desired != forward && !occupied.get(desired)) {
                 steerTried.incrementAndGet()
-                if (steer(head, forward, desired)) {
+                var steered = steer(head, forward, desired)
+                if (!steered) {
+                    // shake the local structure and retry once
+                    mutate(towardBands = false)
+                    val fwd2 = forwardOf(head, bodySide)
+                    if (fwd2 != -1 && fwd2 != desired) steered = steer(head, fwd2, desired)
+                    if (fwd2 == desired) steered = true
+                }
+                if (steered) {
                     steerOk.incrementAndGet()
                     forward = desired
                 }
             }
-            mutate(towardBands = true)
+            mutate(towardBands = false)
             forward = forwardOf(head, bodySide).takeIf { it != -1 } ?: forward
         }
 
@@ -122,21 +144,52 @@ class ShowmanStrategy(private val random: Random) : Strategy {
      * never touches the body-side edge, so the body arc survives intact.
      */
     private fun steer(head: Int, fwd: Int, n: Int): Boolean {
+        if (directSteer(head, fwd, n)) return true
+        // No chord: the swap needs the cycle edge {n, D} where D is the common
+        // free neighbor of n and fwd (the diagonal). Build that edge first with
+        // its own repaired swap, then retry the direct steer.
+        val d = fwd + (n - head)
+        if (d in na.indices && adjacent(d, n) && adjacent(d, fwd) && !occupied.get(d)) {
+            if (!isEdge(n, d) && ensureEdge(n, d) && directSteer(head, forwardOf(head, -1)
+                    .let { if (it == -1) fwd else it }, n)
+            ) {
+                return true
+            }
+            if (isEdge(n, d) && directSteer(head, fwd, n)) return true
+        }
+        steerNoChord.incrementAndGet()
+        return false
+    }
+
+    private fun directSteer(head: Int, fwd: Int, n: Int): Boolean {
+        if (fwd == n) return true
         for (m in intArrayOf(na[n], nb[n])) {
             if (m == head || m == n || m == fwd) continue
             if (!adjacent(m, fwd)) continue
             undoLog.clear()
             loggedSwap(head, fwd, n, m)
             if (singleCycleFrom(head)) return true
-            // The swap split the cycle in two. Merging two distinct cycles with
-            // one swap always yields a single cycle — find any splice point
-            // between the orphan loop and the main loop and stitch them.
+            // A splitting swap: merge the orphan loop back with one splice.
             if (repairSplit(head)) return true
             undoAll()
             steerBlocked.incrementAndGet()
             return false
         }
-        steerNoChord.incrementAndGet()
+        return false
+    }
+
+    /** Create cycle edge {x, y} (both free, grid-adjacent) via a repaired swap. */
+    private fun ensureEdge(x: Int, y: Int): Boolean {
+        for (px in intArrayOf(na[x], nb[x])) {
+            if (occupied.get(px)) continue
+            for (qy in intArrayOf(na[y], nb[y])) {
+                if (occupied.get(qy) || qy == px || !adjacent(px, qy)) continue
+                undoLog.clear()
+                loggedSwap(x, px, y, qy)
+                if (singleCycleFrom(x) || repairSplit(x)) return true
+                undoAll()
+            }
+        }
         return false
     }
 
@@ -426,8 +479,6 @@ class ShowmanStrategy(private val random: Random) : Strategy {
             }
         }
 
-        // Evolve the brick texture into organic lanes before the game starts.
-        repeat(12_000) { mutate(towardBands = true) }
     }
 
     private fun direction(from: Int, to: Int): Direction = when (to - from) {

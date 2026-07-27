@@ -22,6 +22,27 @@ fun main() {
     val strategyName = prop("strategy", defaultStrategy)
     val baseSeed = longProp("seed", System.currentTimeMillis())
 
+    // Curated replay: every round re-executes a REAL recorded full-board win of
+    // the honest bot (the engine is deterministic: a (strategy, seed) pair
+    // replays bit-for-bit). Nothing is imitated — survivor bias as showmanship.
+    val winners: List<Pair<String, Long>> = if (strategyName == "replay") {
+        val file = File(prop("winners", "data/winners-60.txt"))
+        val lines = when {
+            file.exists() -> file.readLines()
+            else -> object {}.javaClass.getResource("/winners-60.txt")
+                ?.readText()?.lines().orEmpty()
+        }
+        lines.mapNotNull { line ->
+            val parts = line.trim().split(" ")
+            if (parts.size == 2) parts[0] to parts[1].toLong() else null
+        }.also {
+            require(it.isNotEmpty()) { "replay mode needs a non-empty winners file" }
+            println("webshow: replay library of ${"$"}{it.size} recorded full-board wins")
+        }
+    } else {
+        emptyList()
+    }
+
     val server = WebShowServer(
         port, size, size,
         strategyName = strategyName,
@@ -30,13 +51,18 @@ fun main() {
     val area = size * size
     var round = 0L
 
+    val pickRng = Random(baseSeed)
     while (true) {
-        val seed = baseSeed + round
+        val (playName, seed) = if (winners.isNotEmpty()) {
+            winners[pickRng.nextInt(winners.size)]
+        } else {
+            strategyName to baseSeed + round
+        }
         server.newGame(round, seed)
         val gameStart = System.currentTimeMillis()
         val result = GameRunner.play(
             config = GameConfig(width = size, height = size, seed = seed),
-            strategy = Strategies.create(strategyName, Random(seed)),
+            strategy = Strategies.create(playName, Random(seed)),
         ) { game ->
             server.render(game)
             // Zero viewers: pause the game outright — the 24/7 box burns nothing
