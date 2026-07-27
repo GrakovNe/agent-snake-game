@@ -81,6 +81,10 @@ data class SafeGreedyKnobs(
     val guardRepair: Boolean = false,
     /** endgame ranking with isolated-hole count first (AUC 0.85 vs solved/doomed) */
     val rankHoles: Boolean = false,
+    /** hard free-space contiguity guard from this many free cells down (0 = off) */
+    val bandFree: Int = 0,
+    /** lane-biased (serpentine) path reconstruction */
+    val laneBias: Boolean = false,
 )
 
 class SafeGreedyStrategy(
@@ -254,9 +258,13 @@ class SafeGreedyStrategy(
                 candidates
             }
 
+            val inBand = knobs.bandFree > 0 && freeCells <= knobs.bandFree
             fun guarded(candidate: Candidate): Boolean =
                 !guardHoles || desperate ||
-                    if (endgame && knobs.rankHoles) {
+                    if (inBand) {
+                        // hard contiguity: free space must stay in one piece
+                        candidate.components <= maxOf(1, board.freeComponents())
+                    } else if (endgame && knobs.rankHoles) {
                         candidate.deadCells <= deadNow
                     } else if (endgame && knobs.guardRepair) {
                         candidate.repair <= repairNow + 1e-9
@@ -602,6 +610,7 @@ class SafeGreedyStrategy(
             timeAware = timeAware,
             margin = margin,
             hugging = knobs.hugging,
+            laneBias = knobs.laneBias,
         )?.let { paths.add(it) }
         if (endgame) {
             if (knobs.hugging) {

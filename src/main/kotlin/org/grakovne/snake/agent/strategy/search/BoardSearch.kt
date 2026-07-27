@@ -54,11 +54,12 @@ class BoardSearch(val width: Int, val height: Int) {
         blockFood: Boolean = false,
         targetWalkable: Boolean = false,
         hugging: Boolean = false,
+        laneBias: Boolean = false,
     ): IntArray? {
         val path = bfs(vacate, headIdx, target, timeAware, margin, blockFood, targetWalkable)
             ?: return null
-        if (!hugging) return path
-        return reconstructHugging(headIdx, target)
+        if (!hugging && !laneBias) return path
+        return reconstructHugging(headIdx, target, laneBias)
     }
 
     /**
@@ -67,24 +68,34 @@ class BoardSearch(val width: Int, val height: Int) {
      * shape: hugging trajectories do not leave single-cell holes behind the way corner-cutting
      * ones do.
      */
-    private fun reconstructHugging(from: Int, target: Int): IntArray {
+    private fun reconstructHugging(from: Int, target: Int, laneBias: Boolean = false): IntArray {
         val length = dist[target] + 1
         val path = IntArray(length)
         path[length - 1] = target
         var cursor = target
+        var prevDir = -1
         for (i in length - 2 downTo 0) {
             var best = -1
             var bestScore = -1
+            var bestDir = -1
             for (direction in 0 until 4) {
                 val next = neighbor(cursor, direction)
                 if (next == -1 || dist[next] != dist[cursor] - 1) continue
-                val score = hugScore(next)
+                var score = hugScore(next)
+                if (laneBias) {
+                    // serpentine pull: vertical continuation strongly preferred —
+                    // lane-like trajectories structurally avoid isolated holes
+                    if (direction <= 1) score += 3            // vertical move
+                    if (direction == prevDir) score += 2      // keep going straight
+                }
                 if (score > bestScore) {
                     bestScore = score
                     best = next
+                    bestDir = direction
                 }
             }
             path[i] = best
+            prevDir = bestDir
             cursor = best
         }
         return path

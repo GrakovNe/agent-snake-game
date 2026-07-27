@@ -18,6 +18,7 @@ object Strategies {
         "greedy", "random", "safe", "safetime", "hug", "band",
         "sweep", "learned", "mc", "sweepMidChaos", "sweepEndChaos",
         "episodes", "neural", "neuralstall", "repairguard", "holerank",
+        "band2", "lanes", "laneband",
     )
 
     fun create(name: String, random: Random = Random.Default): Strategy = when (name) {
@@ -52,6 +53,31 @@ object Strategies {
                 episodeSeeds = intProp("episodeSeeds", 4),
                 episodeRollouts = intProp("episodeRollouts", 3),
                 episodeFree = intProp("episodeFree", 40),
+            ),
+        )
+        // Mean-shifters (night synthesis): hard band contiguity / serpentine lanes.
+        "band2" -> SafeGreedyStrategy(
+            timeAware = false, guardHoles = true, random = random,
+            knobs = SafeGreedyKnobs(
+                stallCommitMidgame = false, avoidAroundFood = false,
+                guardDeadCells = false, timedCandidate = false,
+                bandFree = intProp("bandFree", 60),
+            ),
+        )
+        "lanes" -> SafeGreedyStrategy(
+            timeAware = false, guardHoles = true, random = random,
+            knobs = SafeGreedyKnobs(
+                stallCommitMidgame = false, avoidAroundFood = false,
+                guardDeadCells = false, timedCandidate = false,
+                laneBias = true,
+            ),
+        )
+        "laneband" -> SafeGreedyStrategy(
+            timeAware = false, guardHoles = true, random = random,
+            knobs = SafeGreedyKnobs(
+                stallCommitMidgame = false, avoidAroundFood = false,
+                guardDeadCells = false, timedCandidate = false,
+                laneBias = true, bandFree = intProp("bandFree", 60),
             ),
         )
         // Champion with isolated-hole count as the primary endgame objective
