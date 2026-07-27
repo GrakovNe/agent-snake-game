@@ -77,6 +77,8 @@ data class SafeGreedyKnobs(
     val valueNetPath: String? = null,
     /** the net also picks the stall-lap shape (instead of a random bias) */
     val valueStall: Boolean = false,
+    /** endgame guard/ranking by repair need R(S) instead of undigestible count */
+    val guardRepair: Boolean = false,
 )
 
 class SafeGreedyStrategy(
@@ -99,6 +101,7 @@ class SafeGreedyStrategy(
         val components: Int,
         val deadCells: Int,
         val undigestible: Int,
+        val repair: Double = 0.0,
     ) {
         val safe get() = staticSafe || escapePlan != null
     }
@@ -210,11 +213,18 @@ class SafeGreedyStrategy(
 
             val deadNow = board.deadFreeCells()
             val undigestibleNow = if (endgame) board.undigestibleHolesNow(knobs.digestSlack) else 0
+            val repairNow = if (endgame && knobs.guardRepair) {
+                board.repairNeed(bodyIndices(game, board))
+            } else 0.0
             // Fragmentation ranking only matters where the trajectory loop is rigid; in the
             // open midgame it just displaces the better-shaped hugging path. With learned
             // value weights the endgame ranking is by predicted outcome instead.
             val weights = knobs.valueWeights
-            val ranked = if (endgame && weights != null) {
+            val ranked = if (endgame && knobs.guardRepair) {
+                candidates.sortedWith(
+                    compareBy({ it.repair }, { it.undigestible }, { it.components }, { it.path.size })
+                )
+            } else if (endgame && weights != null) {
                 val scratch = DoubleArray(BoardSearch.FEATURES)
                 candidates.sortedByDescending { candidate ->
                     board.loopFeatures(candidate.postBody, scratch)
@@ -232,7 +242,9 @@ class SafeGreedyStrategy(
 
             fun guarded(candidate: Candidate): Boolean =
                 !guardHoles || desperate ||
-                    if (endgame) {
+                    if (endgame && knobs.guardRepair) {
+                        candidate.repair <= repairNow + 1e-9
+                    } else if (endgame) {
                         !knobs.guardUndigestible || candidate.undigestible <= undigestibleNow
                     } else {
                         !knobs.guardDeadCells || candidate.deadCells <= deadNow
@@ -642,6 +654,7 @@ class SafeGreedyStrategy(
             components = board.freeComponentsFor(postBody),
             deadCells = board.deadFreeCellsFor(postBody),
             undigestible = if (endgame) board.undigestibleHoles(postBody, knobs.digestSlack) else 0,
+            repair = if (endgame && knobs.guardRepair) board.repairNeed(postBody) else 0.0,
         )
     }
 

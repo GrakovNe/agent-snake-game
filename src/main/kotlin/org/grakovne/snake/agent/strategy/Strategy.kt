@@ -16,7 +16,8 @@ fun interface Strategy {
 object Strategies {
     val names = listOf(
         "greedy", "random", "safe", "safetime", "hug", "band",
-        "sweep", "learned", "mc", "sweepMidChaos", "sweepEndChaos", "episodes", "neural", "neuralstall",
+        "sweep", "learned", "mc", "sweepMidChaos", "sweepEndChaos",
+        "episodes", "neural", "neuralstall", "repairguard",
     )
 
     fun create(name: String, random: Random = Random.Default): Strategy = when (name) {
@@ -51,6 +52,15 @@ object Strategies {
                 episodeSeeds = intProp("episodeSeeds", 4),
                 episodeRollouts = intProp("episodeRollouts", 3),
                 episodeFree = intProp("episodeFree", 40),
+            ),
+        )
+        // Champion plus theory-derived repair-need guard/ranking at eats.
+        "repairguard" -> SafeGreedyStrategy(
+            timeAware = false, guardHoles = true, random = random,
+            knobs = SafeGreedyKnobs(
+                stallCommitMidgame = false, avoidAroundFood = false,
+                guardDeadCells = false, timedCandidate = false,
+                guardRepair = true,
             ),
         )
         // Neural episode search plus value-guided stall-lap shaping.

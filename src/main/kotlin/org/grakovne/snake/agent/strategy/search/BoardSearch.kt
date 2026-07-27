@@ -133,6 +133,49 @@ class BoardSearch(val width: Int, val height: Int) {
      */
     fun undigestibleHoles(body: IntArray, minOverlap: Int = 1): Int = scanUndigestible(body, minOverlap, null)
 
+    /**
+     * Repair need R(S) from the eat-locality theorem: for every isolated hole, how far
+     * its closest wall pair is beyond the digestibility window. Total reorder capacity
+     * from gap g to the end is ~g^2/2, so R(S) is a graded doom measure — and a
+     * theory-derived objective to minimize when choosing eating walks.
+     */
+    fun repairNeed(body: IntArray): Double {
+        val loop = body.size
+        val gap = size - loop
+        if (gap <= 1) return 0.0
+        java.util.Arrays.fill(scratchVacate, 0)
+        for (i in body.indices) {
+            scratchVacate[body[i]] = body.size - i
+        }
+        val walls = IntArray(4)
+        var need = 0.0
+        cells@ for (cell in 0 until size) {
+            if (scratchVacate[cell] != 0) continue
+            var count = 0
+            for (direction in 0 until 4) {
+                val next = neighbor(cell, direction)
+                if (next == -1) continue
+                val b = scratchVacate[next]
+                if (b == 0) continue@cells   // free cluster: slack
+                walls[count++] = b
+            }
+            if (count < 2) {
+                need += loop / 4.0           // degenerate corner hole: heavy penalty
+                continue
+            }
+            var dmin = Int.MAX_VALUE
+            for (i in 0 until count) {
+                for (j in i + 1 until count) {
+                    val d = (walls[i] - walls[j]).mod(loop)
+                    val circ = minOf(d, loop - d)
+                    if (circ < dmin) dmin = circ
+                }
+            }
+            if (dmin > gap + 2) need += (dmin - gap - 2).toDouble()
+        }
+        return need
+    }
+
     /** Cells of every undigestible hole for the given body. */
     fun undigestibleHoleCells(body: IntArray, minOverlap: Int = 1): IntArray {
         val cells = ArrayList<Int>(4)
