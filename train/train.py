@@ -99,7 +99,8 @@ def main():
     if not rows:
         sys.exit("no data")
     rng = np.random.default_rng(7)
-    device = "mps" if torch.backends.mps.is_available() else "cpu"
+    device = ("cuda" if torch.cuda.is_available()
+              else "mps" if torch.backends.mps.is_available() else "cpu")
 
     # The net is fully convolutional: one model serves every board size. Batches are
     # homogeneous by size; sizes are interleaved during training.
@@ -115,6 +116,7 @@ def main():
         }
         print(f"{len(group)} samples {w}x{h}; deficit mean={2 * w * y.mean():.2f} std={2 * w * y.std():.2f}")
 
+    first_key = next(iter(sizes))
     net = ValueNet(args.channels, args.blocks).to(device)
     opt = torch.optim.AdamW(net.parameters(), lr=args.lr)
     sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=args.epochs)
@@ -172,12 +174,14 @@ def main():
         if combined < best_metric:
             best_metric = combined
             best_state = {k: v.detach().cpu().clone() for k, v in net.state_dict().items()}
+            # checkpoint immediately: preemptible boxes die mid-run
+            torch.save({"model": best_state, "w": first_key[0], "h": first_key[1],
+                        "channels": args.channels, "blocks": args.blocks}, args.out)
             marker = "  *best*"
         print(f"epoch {epoch + 1:3d}  train {total / len(batches):.4f}  "
               + "  ".join(report) + marker)
 
-    first = next(iter(sizes))
-    torch.save({"model": best_state or net.state_dict(), "w": first[0], "h": first[1],
+    torch.save({"model": best_state or net.state_dict(), "w": first_key[0], "h": first_key[1],
                 "channels": args.channels, "blocks": args.blocks}, args.out)
     print(f"saved {args.out} (best combined val {best_metric:.4f})")
 
