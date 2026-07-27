@@ -19,11 +19,14 @@ object Strategies {
         "sweep", "learned", "mc", "sweepMidChaos", "sweepEndChaos",
         "episodes", "neural", "neuralstall", "repairguard", "holerank",
         "band2", "lanes", "laneband",
-        "chor0", "chor0e", "sortstall", "sorteats", "endsolver",
+        "chor0", "chor0e", "sortstall", "sorteats", "endsolver", "showman",
     )
 
     fun create(name: String, random: Random = Random.Default): Strategy = when (name) {
         "greedy" -> GreedyStrategy()
+        // SHOW-ONLY: guaranteed full board via a mutating Hamiltonian cycle.
+        // Banned from research comparisons — it wins by construction.
+        "showman" -> ShowmanStrategy(random)
         "random" -> RandomStrategy(random)
         "safe" -> SafeGreedyStrategy(timeAware = false)
         "safetime" -> SafeGreedyStrategy(timeAware = true)
