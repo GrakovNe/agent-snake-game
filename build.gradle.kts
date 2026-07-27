@@ -34,12 +34,17 @@ fun registerRun(name: String, mainClassName: String, description: String) =
             "huntDump", "autopsy", "autopsyEvery", "undig",
             "rolloutFree", "rolloutCount", "rngSpread",
             "episodeSeeds", "episodeRollouts", "episodeFree",
-            "seedFrom", "rollouts", "out", "valueNet", "starveDiv", "everyNth", "phase1Policy", "rolloutPolicy", "mode", "in", "spawnCap", "dumpScores", "solverFree", "solverBudget", "starveMult", "winners",
+            "seedFrom", "rollouts", "out", "valueNet", "starveDiv", "everyNth", "phase1Policy", "rolloutPolicy", "mode", "in", "spawnCap", "dumpScores", "solverFree", "solverBudget", "starveMult", "winners", "seeds", "rewinds",
         ).forEach { key ->
             (project.findProperty(key) as? String)?.let { systemProperty(key, it) }
         }
     }
 
+registerRun(
+    "fairy",
+    "org.grakovne.snake.agent.app.FairyKt",
+    "Search winning spawn scripts for the honest bot: ./gradlew fairy -Psize=30 -Pseeds=20"
+)
 registerRun(
     "turing",
     "org.grakovne.snake.agent.app.TuringKt",

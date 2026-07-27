@@ -12,7 +12,13 @@ class SnakeGame(
     initialBody: List<Position>? = null,
     /** Optional fixed initial food — used by exact episode simulations. */
     initialFood: Position? = null,
+    /** Optional scripted spawn positions, consumed in order; uniform RNG after. */
+    private val spawnScript: List<Position>? = null,
 ) : GameView {
+
+    /** Every spawn this game produced (scripted or random), in order. */
+    val spawnLog = ArrayList<Position>(64)
+    private var spawnIndex = 0
 
     override val width = config.width
     override val height = config.height
@@ -114,11 +120,25 @@ class SnakeGame(
     }
 
     private fun spawnFood(): Position {
+        if (spawnScript != null && spawnIndex < spawnScript.size) {
+            val scripted = spawnScript[spawnIndex]
+            if (isFree(scripted)) {
+                spawnIndex++
+                spawnLog.add(scripted)
+                return scripted
+            }
+            // script diverged from reality: fall through to uniform, script off
+            spawnIndex = spawnScript.size
+        }
         val freeCells = width * height - body.size
         var skip = random.nextInt(freeCells)
         for (index in occupied.indices) {
             if (!occupied[index]) {
-                if (skip == 0) return Position(index % width, index / width)
+                if (skip == 0) {
+                    val position = Position(index % width, index / width)
+                    spawnLog.add(position)
+                    return position
+                }
                 skip--
             }
         }
