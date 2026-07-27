@@ -27,6 +27,9 @@ fun main() {
     val elapsedSeconds = (System.nanoTime() - startedAt) / 1e9
 
     println(evaluation.summary())
+    if (prop("dumpScores", "") == "1") {
+        evaluation.results.forEachIndexed { i, r -> println("game $i score ${r.score}") }
+    }
     val target = size * size - 1
     val onTarget = evaluation.results.count { it.score >= target }
     println("target (score >= $target): $onTarget/$games")
