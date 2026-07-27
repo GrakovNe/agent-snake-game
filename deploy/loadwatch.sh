@@ -40,3 +40,16 @@ fi
 # --- Home box: powered off by the user (2026-07-27), do not watch. ---
 # Webshow (snake.grakovne.org) resumes via systemd whenever the box is up again.
 echo "home: not watched (powered off; webshow autostarts on boot)"
+
+# --- YC GPU quota (ticket HL031072): reports GRANTED once limit > 0 ---
+export PATH="$HOME/yandex-cloud/bin:$PATH"
+if command -v yc >/dev/null 2>&1; then
+  T4=$(yc quota-manager quota-limit get --resource-type=resource-manager.cloud \
+    --resource-id=$(yc config get cloud-id) --quota-id=compute.instanceT4Gpus.count \
+    --format json 2>/dev/null | python3 -c 'import sys,json;print(json.load(sys.stdin).get("limit",0))' 2>/dev/null)
+  if [ "${T4:-0}" != "0" ] && [ -n "$T4" ]; then
+    echo "gpu: QUOTA GRANTED (T4 limit=$T4) — spin up the T4 box"
+  else
+    echo "gpu: quota pending (T4 limit=0, ticket HL031072)"
+  fi
+fi
