@@ -79,6 +79,8 @@ data class SafeGreedyKnobs(
     val valueStall: Boolean = false,
     /** endgame guard/ranking by repair need R(S) instead of undigestible count */
     val guardRepair: Boolean = false,
+    /** endgame ranking with isolated-hole count first (AUC 0.85 vs solved/doomed) */
+    val rankHoles: Boolean = false,
 )
 
 class SafeGreedyStrategy(
@@ -220,7 +222,11 @@ class SafeGreedyStrategy(
             // open midgame it just displaces the better-shaped hugging path. With learned
             // value weights the endgame ranking is by predicted outcome instead.
             val weights = knobs.valueWeights
-            val ranked = if (endgame && knobs.guardRepair) {
+            val ranked = if (endgame && knobs.rankHoles) {
+                candidates.sortedWith(
+                    compareBy({ it.deadCells }, { it.components }, { it.undigestible }, { it.path.size })
+                )
+            } else if (endgame && knobs.guardRepair) {
                 candidates.sortedWith(
                     compareBy({ it.repair }, { it.undigestible }, { it.components }, { it.path.size })
                 )
@@ -242,7 +248,9 @@ class SafeGreedyStrategy(
 
             fun guarded(candidate: Candidate): Boolean =
                 !guardHoles || desperate ||
-                    if (endgame && knobs.guardRepair) {
+                    if (endgame && knobs.rankHoles) {
+                        candidate.deadCells <= deadNow
+                    } else if (endgame && knobs.guardRepair) {
                         candidate.repair <= repairNow + 1e-9
                     } else if (endgame) {
                         !knobs.guardUndigestible || candidate.undigestible <= undigestibleNow

@@ -22,6 +22,7 @@ import torch.nn as nn
 
 
 def load_shards(patterns):
+    """Supports `label w h cells...` and bucket format `mean std w h cells...`."""
     rows = []
     for pattern in patterns:
         for path in sorted(glob.glob(pattern)):
@@ -30,8 +31,12 @@ def load_shards(patterns):
                     parts = line.split()
                     if len(parts) < 4:
                         continue
-                    rows.append((float(parts[0]), int(parts[1]), int(parts[2]),
-                                 np.array(parts[3:], dtype=np.int32)))
+                    if "." in parts[1]:  # bucket format: skip the std column
+                        label, rest = float(parts[0]), parts[2:]
+                    else:
+                        label, rest = float(parts[0]), parts[1:]
+                    rows.append((label, int(rest[0]), int(rest[1]),
+                                 np.array(rest[2:], dtype=np.int32)))
     return rows
 
 
@@ -110,7 +115,10 @@ def main():
 
     net = ValueNet().to(device)
     opt = torch.optim.AdamW(net.parameters(), lr=args.lr)
+    sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=args.epochs)
     loss_fn = nn.SmoothL1Loss()
+    best_metric = float("inf")
+    best_state = None
     print(f"device={device}")
     for (w, h), s in sizes.items():
         base = float(((s["yt"][s["val"]] - s["yt"][s["train"]].mean()) ** 2).mean().sqrt()) * 2 * w
@@ -143,11 +151,26 @@ def main():
                 rmse = float(((pred - yv) ** 2).mean().sqrt()) * 2 * w
                 corr = float(np.corrcoef(pred.cpu().numpy(), yv.cpu().numpy())[0, 1])
                 report.append(f"{w}x{h}: RMSE {rmse:.2f} corr {corr:.3f}")
-        print(f"epoch {epoch + 1:3d}  train {total / len(batches):.4f}  " + "  ".join(report))
+        sched.step()
+        # combined val metric: mean normalized RMSE across sizes
+        combined = 0.0
+        with torch.no_grad():
+            for (w, h), s in sizes.items():
+                pred = net(s["xt"][s["val"]].to(device))
+                yv = s["yt"][s["val"]].to(device)
+                combined += float(((pred - yv) ** 2).mean().sqrt())
+        combined /= len(sizes)
+        marker = ""
+        if combined < best_metric:
+            best_metric = combined
+            best_state = {k: v.detach().cpu().clone() for k, v in net.state_dict().items()}
+            marker = "  *best*"
+        print(f"epoch {epoch + 1:3d}  train {total / len(batches):.4f}  "
+              + "  ".join(report) + marker)
 
     first = next(iter(sizes))
-    torch.save({"model": net.state_dict(), "w": first[0], "h": first[1]}, args.out)
-    print(f"saved {args.out}")
+    torch.save({"model": best_state or net.state_dict(), "w": first[0], "h": first[1]}, args.out)
+    print(f"saved {args.out} (best combined val {best_metric:.4f})")
 
 
 if __name__ == "__main__":

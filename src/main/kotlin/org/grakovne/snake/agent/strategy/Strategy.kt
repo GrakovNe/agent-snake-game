@@ -17,7 +17,7 @@ object Strategies {
     val names = listOf(
         "greedy", "random", "safe", "safetime", "hug", "band",
         "sweep", "learned", "mc", "sweepMidChaos", "sweepEndChaos",
-        "episodes", "neural", "neuralstall", "repairguard",
+        "episodes", "neural", "neuralstall", "repairguard", "holerank",
     )
 
     fun create(name: String, random: Random = Random.Default): Strategy = when (name) {
@@ -52,6 +52,16 @@ object Strategies {
                 episodeSeeds = intProp("episodeSeeds", 4),
                 episodeRollouts = intProp("episodeRollouts", 3),
                 episodeFree = intProp("episodeFree", 40),
+            ),
+        )
+        // Champion with isolated-hole count as the primary endgame objective
+        // (data-driven: hole count separates solved/doomed with AUC 0.85).
+        "holerank" -> SafeGreedyStrategy(
+            timeAware = false, guardHoles = true, random = random,
+            knobs = SafeGreedyKnobs(
+                stallCommitMidgame = false, avoidAroundFood = false,
+                guardDeadCells = false, timedCandidate = false,
+                rankHoles = true,
             ),
         )
         // Champion plus theory-derived repair-need guard/ranking at eats.
