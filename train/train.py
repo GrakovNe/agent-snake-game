@@ -143,23 +143,29 @@ def main():
             opt.step()
             total += float(loss.detach())
         net.eval()
+
+        def val_pred(s):
+            """chunked forward pass: big val sets blow MPS memory otherwise"""
+            preds = []
+            idx = s["val"]
+            with torch.no_grad():
+                for start in range(0, len(idx), 512):
+                    xb = s["xt"][idx[start:start + 512]].to(device)
+                    preds.append(net(xb).cpu())
+            return torch.cat(preds)
+
         report = []
-        with torch.no_grad():
-            for (w, h), s in sizes.items():
-                pred = net(s["xt"][s["val"]].to(device))
-                yv = s["yt"][s["val"]].to(device)
-                rmse = float(((pred - yv) ** 2).mean().sqrt()) * 2 * w
-                corr = float(np.corrcoef(pred.cpu().numpy(), yv.cpu().numpy())[0, 1])
-                report.append(f"{w}x{h}: RMSE {rmse:.2f} corr {corr:.3f}")
-        sched.step()
-        # combined val metric: mean normalized RMSE across sizes
         combined = 0.0
-        with torch.no_grad():
-            for (w, h), s in sizes.items():
-                pred = net(s["xt"][s["val"]].to(device))
-                yv = s["yt"][s["val"]].to(device)
-                combined += float(((pred - yv) ** 2).mean().sqrt())
+        for (w, h), s in sizes.items():
+            pred = val_pred(s)
+            yv = s["yt"][s["val"]]
+            rmse_n = float(((pred - yv) ** 2).mean().sqrt())
+            rmse = rmse_n * 2 * w
+            corr = float(np.corrcoef(pred.numpy(), yv.numpy())[0, 1])
+            report.append(f"{w}x{h}: RMSE {rmse:.2f} corr {corr:.3f}")
+            combined += rmse_n
         combined /= len(sizes)
+        sched.step()
         marker = ""
         if combined < best_metric:
             best_metric = combined
