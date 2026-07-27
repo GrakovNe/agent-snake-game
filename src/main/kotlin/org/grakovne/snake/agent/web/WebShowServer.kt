@@ -100,8 +100,12 @@ class WebShowServer(
         }
     }
 
+    /** Number of connected viewers — lets the game loop idle when nobody watches. */
+    fun viewers(): Int = clients.size
+
     /** Called from the game thread; cheap and self-throttling. */
     fun render(game: SnakeGame) {
+        if (clients.isEmpty()) return   // nobody watching: skip frame building entirely
         val now = System.nanoTime()
         val terminal = game.status != GameStatus.RUNNING
         if (!terminal && now - lastPublishNanos < 30_000_000) return
