@@ -34,17 +34,17 @@ if [ -z "$WIP" ]; then
 else
   VM=$(ssh -o ConnectTimeout=6 -o BatchMode=yes -o StrictHostKeyChecking=accept-new yc-user@$WIP '
     L=$(cut -d" " -f1 /proc/loadavg); J=$(pgrep -c java)
-    H=$(wc -l < agent-snake-game/data/planes-60-exit3.txt 2>/dev/null || echo 0)
-    D=$([ -f agent-snake-game/data/planes-60-exit3.txt.done ] && echo done || echo running)
+    H=$(wc -l < agent-snake-game/data/planes-60-exit3-full.txt 2>/dev/null || echo 0)
+    D=$([ -f agent-snake-game/data/planes-60-exit3-full.txt.done ] && echo done || echo running)
     echo "$L $J $H $D"' 2>/dev/null)
   if [ -z "$VM" ]; then
     echo "worker: ssh UNREACHABLE ($WIP) — booting or dead"
   else
     set -- $VM
     if [ "$2" -gt 0 ] 2>/dev/null && [ "$4" != "done" ]; then
-      echo "worker: BUSY ip=$WIP load=$1 java=$2 exit3=$3 lines ($4)"
+      echo "worker: BUSY ip=$WIP load=$1 java=$2 exit3full=$3 lines ($4)"
     elif [ "$4" = "done" ]; then
-      echo "worker: IDLE ip=$WIP — harvest exit3 COMPLETE ($3 lines), ready for new work"
+      echo "worker: IDLE ip=$WIP — harvest exit3-full COMPLETE ($3 lines), ready for new work"
     else
       echo "worker: IDLE ip=$WIP load=$1 java=$2 — no jobs, ready for new work"
     fi
