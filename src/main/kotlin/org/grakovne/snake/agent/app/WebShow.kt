@@ -22,22 +22,28 @@ fun main() {
     val strategyName = prop("strategy", defaultStrategy)
     val baseSeed = longProp("seed", System.currentTimeMillis())
 
-    // Curated replay: every round re-executes a REAL recorded full-board win of
-    // the honest bot (the engine is deterministic: a (strategy, seed) pair
-    // replays bit-for-bit). Nothing is imitated — survivor bias as showmanship.
-    val winners: List<Pair<String, Long>> = if (strategyName == "replay") {
-        val file = File(prop("winners", "data/winners-60.txt"))
+    // Fairy mode: every round is a REAL honest game under a pre-searched spawn
+    // script (the benevolent food fairy) — the bot is genuine and every game is
+    // unique; only its luck is loaded. Script lines: "<strategy> <botSeed> <c,c,..>".
+    data class Scripted(val strategy: String, val botSeed: Long, val spawns: List<org.grakovne.snake.agent.core.Position>)
+    val scripts: List<Scripted> = if (strategyName == "fairy") {
+        val file = File(prop("winners", "data/fairy-60.txt"))
         val lines = when {
             file.exists() -> file.readLines()
-            else -> object {}.javaClass.getResource("/winners-60.txt")
+            else -> object {}.javaClass.getResource("/fairy-60.txt")
                 ?.readText()?.lines().orEmpty()
         }
         lines.mapNotNull { line ->
             val parts = line.trim().split(" ")
-            if (parts.size == 2) parts[0] to parts[1].toLong() else null
+            if (parts.size != 3) return@mapNotNull null
+            val spawns = parts[2].split(",").map { idx ->
+                val v = idx.toInt()
+                org.grakovne.snake.agent.core.Position(v % size, v / size)
+            }
+            Scripted(parts[0], parts[1].toLong(), spawns)
         }.also {
-            require(it.isNotEmpty()) { "replay mode needs a non-empty winners file" }
-            println("webshow: replay library of ${"$"}{it.size} recorded full-board wins")
+            require(it.isNotEmpty()) { "fairy mode needs a non-empty scripts file" }
+            println("webshow: fairy library of ${"$"}{it.size} scripted honest wins")
         }
     } else {
         emptyList()
@@ -53,16 +59,15 @@ fun main() {
 
     val pickRng = Random(baseSeed)
     while (true) {
-        val (playName, seed) = if (winners.isNotEmpty()) {
-            winners[pickRng.nextInt(winners.size)]
-        } else {
-            strategyName to baseSeed + round
-        }
+        val script = if (scripts.isNotEmpty()) scripts[pickRng.nextInt(scripts.size)] else null
+        val playName = script?.strategy ?: strategyName
+        val seed = script?.botSeed ?: (baseSeed + round)
         server.newGame(round, seed)
         val gameStart = System.currentTimeMillis()
         val result = GameRunner.play(
             config = GameConfig(width = size, height = size, seed = seed),
             strategy = Strategies.create(playName, Random(seed)),
+            spawnScript = script?.spawns,
         ) { game ->
             server.render(game)
             // Zero viewers: pause the game outright — the 24/7 box burns nothing

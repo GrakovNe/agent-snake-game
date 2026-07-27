@@ -15,9 +15,10 @@ object GameRunner {
     fun play(
         config: GameConfig,
         strategy: Strategy,
+        spawnScript: List<org.grakovne.snake.agent.core.Position>? = null,
         onStep: ((SnakeGame) -> Unit)? = null,
     ): GameResult {
-        val game = SnakeGame(config)
+        val game = SnakeGame(config, spawnScript = spawnScript)
         onStep?.invoke(game)
 
         while (game.status == GameStatus.RUNNING) {

@@ -99,6 +99,21 @@ fun main() {
         )
     )
 
+    // closed-loop check: every script must replay to WON with a fresh bot
+    var verified = 0
+    for ((seed, attemptResult) in wins) {
+        val replay = SnakeGame(
+            GameConfig(width = size, height = size, seed = 0),
+            spawnScript = attemptResult.game.spawnLog.toList(),
+        )
+        val bot = Strategies.create(strategyName, Random(seed))
+        while (replay.status == GameStatus.RUNNING) {
+            replay.step(bot.nextMove(replay))
+        }
+        if (replay.status == GameStatus.WON) verified++
+    }
+    println("verified replays: $verified/${wins.size}")
+
     if (out.isNotEmpty() && wins.isNotEmpty()) {
         File(out).parentFile?.mkdirs()
         File(out).appendText(
