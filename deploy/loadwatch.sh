@@ -58,7 +58,7 @@ if [ -z "$GIP" ]; then
 else
   G=$(ssh -o ConnectTimeout=6 -o BatchMode=yes -o StrictHostKeyChecking=accept-new yc-user@$GIP '
     T=$(pgrep -cf train.py); U=$(nvidia-smi --query-gpu=utilization.gpu --format=csv,noheader,nounits 2>/dev/null)
-    E=$(grep -c "^epoch" agent-snake-game/data/train-v9.log 2>/dev/null || echo 0)
+    E=$(grep -c "^epoch" $(ls -t agent-snake-game/data/train-v*.log 2>/dev/null | head -1) 2>/dev/null || echo 0)
     echo "${T:-0} ${U:-?} ${E:-0}"' 2>/dev/null)
   if [ -z "$G" ]; then
     echo "gpu-box: ssh UNREACHABLE ($GIP) — booting or dead"
