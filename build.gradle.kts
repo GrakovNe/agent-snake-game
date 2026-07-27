@@ -41,6 +41,11 @@ fun registerRun(name: String, mainClassName: String, description: String) =
     }
 
 registerRun(
+    "turing",
+    "org.grakovne.snake.agent.app.TuringKt",
+    "Trajectory statistics discriminating showman from honest bots: ./gradlew turing -Pstrategy=showman"
+)
+registerRun(
     "show",
     "org.grakovne.snake.agent.app.ShowKt",
     "Watch a strategy play with the Swing UI: ./gradlew show -Psize=40 -Pdelay=20 -Pstrategy=greedy"
