@@ -12,6 +12,7 @@ Usage:
   train/.venv/bin/python train/train.py data/planes-30-*.txt --epochs 30
 """
 import argparse
+import time
 import glob
 import math
 import sys
@@ -121,6 +122,8 @@ def main():
     opt = torch.optim.AdamW(net.parameters(), lr=args.lr)
     sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=args.epochs)
     loss_fn = nn.SmoothL1Loss()
+    use_amp = device == "cuda"   # T4 tensor cores: ~4x on fp16, fp32 master weights
+    scaler = torch.cuda.amp.GradScaler(enabled=use_amp)
     best_metric = float("inf")
     best_state = None
     print(f"device={device}")
@@ -137,14 +140,17 @@ def main():
                 batches.append((key, perm[start:start + args.batch]))
         rng.shuffle(batches)
         total = 0.0
+        epoch_started = time.time()
         for key, idx in batches:
             s = sizes[key]
             xb = s["xt"][idx].to(device)
             yb = s["yt"][idx].to(device)
             opt.zero_grad()
-            loss = loss_fn(net(xb), yb)
-            loss.backward()
-            opt.step()
+            with torch.autocast(device_type=device, enabled=use_amp):
+                loss = loss_fn(net(xb), yb)
+            scaler.scale(loss).backward()
+            scaler.step(opt)
+            scaler.update()
             total += float(loss.detach())
         net.eval()
 
@@ -179,7 +185,7 @@ def main():
                         "channels": args.channels, "blocks": args.blocks}, args.out)
             marker = "  *best*"
         print(f"epoch {epoch + 1:3d}  train {total / len(batches):.4f}  "
-              + "  ".join(report) + marker)
+              + "  ".join(report) + f"  [{time.time() - epoch_started:.0f}s]" + marker)
 
     torch.save({"model": best_state or net.state_dict(), "w": first_key[0], "h": first_key[1],
                 "channels": args.channels, "blocks": args.blocks}, args.out)
