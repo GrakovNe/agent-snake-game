@@ -26,7 +26,8 @@ fun main() {
 
     val area = size * size
     data class Snap(val iso: Int, val comps: Int, val undig: Int)
-    data class Run(val snaps: Map<Int, Snap>, val game: SnakeGame)
+    data class SpawnObs(val index: Int, val headDist: Int, val prevDist: Int)
+    data class Run(val snaps: Map<Int, Snap>, val game: SnakeGame, val spawnObs: List<SpawnObs>)
 
     fun play(strategyName: String, botSeed: Long, script: List<Position>?): Run {
         val game = SnakeGame(
@@ -36,9 +37,24 @@ fun main() {
         val bot = Strategies.create(strategyName, Random(botSeed))
         val board = BoardSearch(size, size)
         val snaps = HashMap<Int, Snap>()
+        val spawnObs = ArrayList<SpawnObs>(area)
         var next = 0
+        var lastFood = game.food
+        var spawnIdx = 0
         while (game.status == GameStatus.RUNNING) {
             game.step(bot.nextMove(game))
+            if (game.food != lastFood && game.status == GameStatus.RUNNING) {
+                spawnIdx++
+                val head = game.head
+                spawnObs.add(
+                    SpawnObs(
+                        index = spawnIdx,
+                        headDist = Math.abs(head.x - game.food.x) + Math.abs(head.y - game.food.y),
+                        prevDist = Math.abs(lastFood.x - game.food.x) + Math.abs(lastFood.y - game.food.y),
+                    )
+                )
+                lastFood = game.food
+            }
             if (next < thresholds.size && 100 * game.score >= thresholds[next] * area) {
                 board.load(game)
                 snaps[thresholds[next]] = Snap(
@@ -49,7 +65,7 @@ fun main() {
                 next++
             }
         }
-        return Run(snaps, game)
+        return Run(snaps, game, spawnObs)
     }
 
     val lines = File(inPath).readLines().mapNotNull { line ->
@@ -65,6 +81,8 @@ fun main() {
     val winSnaps = HashMap<Int, MutableList<Snap>>()
     val loseSnaps = HashMap<Int, MutableList<Snap>>()
     val divergenceFills = ArrayList<Double>()
+    val winObs = ArrayList<SpawnObs>()
+    val loseObs = ArrayList<SpawnObs>()
     var controls = 0
     var controlLost = 0
 
@@ -85,7 +103,23 @@ fun main() {
         while (i < minOf(a.size, b.size) && a[i] == b[i]) i++
         // fill level at the divergence spawn: body ~ initial + i
         divergenceFills.add(100.0 * (3 + i) / area)
+        winObs.addAll(win.spawnObs.filter { it.index > i })
+        loseObs.addAll(lose.spawnObs.filter { it.index > i })
     }
+    fun describe(name: String, obs: List<Double>) {
+        if (obs.isEmpty()) return
+        val sortedObs = obs.sorted()
+        println(
+            "%-22s mean=%.2f p50=%.1f".format(
+                Locale.ROOT, name, obs.average(), sortedObs[sortedObs.size / 2]
+            )
+        )
+    }
+    println()
+    describe("head->food WIN", winObs.map { it.headDist.toDouble() })
+    describe("head->food LOSE", loseObs.map { it.headDist.toDouble() })
+    describe("spawn-chain WIN", winObs.map { it.prevDist.toDouble() })
+    describe("spawn-chain LOSE", loseObs.map { it.prevDist.toDouble() })
 
     println("pairs with contrast (win vs honest loss): $controlLost/$controls")
     println()
