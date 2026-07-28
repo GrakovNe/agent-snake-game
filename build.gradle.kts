@@ -51,6 +51,11 @@ registerRun(
     "Paired win-vs-loss counterfactual analysis over fairy scripts"
 )
 registerRun(
+    "boarddump",
+    "org.grakovne.snake.agent.app.BoardDumpKt",
+    "Dump board snapshots for documentation figures"
+)
+registerRun(
     "turing",
     "org.grakovne.snake.agent.app.TuringKt",
     "Trajectory statistics discriminating showman from honest bots: ./gradlew turing -Pstrategy=showman"
