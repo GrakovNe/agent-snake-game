@@ -46,6 +46,11 @@ registerRun(
     "Search winning spawn scripts for the honest bot: ./gradlew fairy -Psize=30 -Pseeds=20"
 )
 registerRun(
+    "fairystudy",
+    "org.grakovne.snake.agent.app.FairyStudyKt",
+    "Paired win-vs-loss counterfactual analysis over fairy scripts"
+)
+registerRun(
     "turing",
     "org.grakovne.snake.agent.app.TuringKt",
     "Trajectory statistics discriminating showman from honest bots: ./gradlew turing -Pstrategy=showman"
