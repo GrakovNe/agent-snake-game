@@ -35,7 +35,7 @@ fun registerRun(name: String, mainClassName: String, description: String) =
             "rolloutFree", "rolloutCount", "rngSpread",
             "episodeSeeds", "episodeRollouts", "episodeFree",
             "seedFrom", "rollouts", "out", "valueNet", "starveDiv", "everyNth", "phase1Policy", "rolloutPolicy", "mode", "in", "spawnCap", "dumpScores", "solverFree", "solverBudget", "starveMult", "winners", "seeds", "rewinds",
-            "variants", "maxBack", "gateReplays",
+            "variants", "maxBack", "gateReplays", "gMin", "gMax",
         ).forEach { key ->
             (project.findProperty(key) as? String)?.let { systemProperty(key, it) }
         }
@@ -50,6 +50,11 @@ registerRun(
     "policyfairy",
     "org.grakovne.snake.agent.app.PolicyFairyKt",
     "Move-side fairy + trainability gate: ./gradlew policyfairy -Psize=30 -Pseeds=100"
+)
+registerRun(
+    "covermine",
+    "org.grakovne.snake.agent.app.CoverMineKt",
+    "Falsification test of Solved=>coverage: ./gradlew covermine -Psize=30 -Pgames=200"
 )
 registerRun(
     "fairystudy",
