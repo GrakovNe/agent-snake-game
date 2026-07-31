@@ -47,12 +47,22 @@ private class MinedState(
     val finalScore: Int,
 )
 
+/** The player-freedom ladder: k consecutive reshaping stalls x walk portfolio. */
+private val LADDER = listOf(
+    Triple("s0w1", 0, false),
+    Triple("s0wP", 0, true),
+    Triple("s1w1", 1, false),
+    Triple("s1wP", 1, true),
+    Triple("s2w1", 2, false),
+    Triple("s2wP", 2, true),   // baseline: the CERT ground truth
+    Triple("s3wP", 3, true),   // saturation check: does k=3 certify anything new
+)
+private const val BASELINE = "s2wP"
+
 private class Row(
     val seed: Long,
     val g: Int,
-    val cls: String,
-    val clsNoStall: String,
-    val clsMinimal: String,
+    val ladder: Map<String, String>,
     val value: Double,
     val coverU: Int,
     val coverA: Int,
@@ -61,7 +71,9 @@ private class Row(
     val finalScore: Int,
     val body: List<Position>,
     val food: Position,
-)
+) {
+    val cls: String get() = ladder.getValue(BASELINE)
+}
 
 fun main() {
     val size = intProp("size", 30)
@@ -216,11 +228,14 @@ fun main() {
         return cls to (plan?.value ?: 0.0)
     }
 
-    fun classify(state: MinedState, full: EndgameSolver, noStall: EndgameSolver, minimal: EndgameSolver): Row {
-        val (cls, value) = classifyOne(state, full)
-        // the player-freedom ladder: reshaping off, then walk portfolio off too
-        val clsNoStall = classifyOne(state, noStall).first
-        val clsMinimal = classifyOne(state, minimal).first
+    fun classify(state: MinedState, solvers: Map<String, EndgameSolver>): Row {
+        val ladder = HashMap<String, String>(LADDER.size * 2)
+        var value = 0.0
+        for ((name, _, _) in LADDER) {
+            val (cls, v) = classifyOne(state, solvers.getValue(name))
+            ladder[name] = cls
+            if (name == BASELINE) value = v
+        }
         val occupied = BooleanArray(area)
         for (p in state.body) occupied[p.y * size + p.x] = true
         val (freeCells, adjacency) = freeGraph(occupied)
@@ -237,7 +252,7 @@ fun main() {
             if (r < resid) resid = r
         }
         return Row(
-            state.seed, area - state.body.size, cls, clsNoStall, clsMinimal, value,
+            state.seed, area - state.body.size, ladder, value,
             unanchored.best, anchored.best, resid, Integer.bitCount(digestible),
             state.finalScore, state.body, state.food,
         )
@@ -261,10 +276,10 @@ fun main() {
                 val states = mineGame(seedFrom + i)
                 if (states.isEmpty()) return@async emptyList<Row>()
                 val starve = size * size * 2
-                val full = EndgameSolver(size, size, starve, solverBudget)
-                val noStall = EndgameSolver(size, size, starve, solverBudget, maxStalls = 0)
-                val minimal = EndgameSolver(size, size, starve, solverBudget, maxStalls = 0, walkPortfolio = false)
-                states.map { classify(it, full, noStall, minimal) }
+                val solvers = LADDER.associate { (name, stalls, portfolio) ->
+                    name to EndgameSolver(size, size, starve, solverBudget, maxStalls = stalls, walkPortfolio = portfolio)
+                }
+                states.map { classify(it, solvers) }
             }
         }.awaitAll()
     }.flatten()
@@ -273,7 +288,8 @@ fun main() {
     File(out).parentFile?.mkdirs()
     File(out).writeText(
         rows.joinToString("") { r ->
-            "${r.seed} ${r.g} ${r.cls} ${r.clsNoStall} ${r.clsMinimal} %.4f ${r.coverU} ${r.coverA} ${r.resid} ${r.wCount} ${r.finalScore}\n"
+            val ladderCols = LADDER.joinToString(" ") { (name, _, _) -> r.ladder.getValue(name) }
+            "${r.seed} ${r.g} $ladderCols %.4f ${r.coverU} ${r.coverA} ${r.resid} ${r.wCount} ${r.finalScore}\n"
                 .format(Locale.ROOT, r.value)
         }
     )
@@ -303,34 +319,26 @@ fun main() {
             )
         )
     }
-    val fullCert = rows.filter { it.cls == "CERT" }
-    val sanity = rows.count { it.cls == "LOSS" && (it.clsNoStall == "CERT" || it.clsMinimal == "CERT") }
+    val baselineCert = rows.filter { it.cls == "CERT" }
     println()
-    println("player-freedom ladder (order-aware certificates, engine-exact, zero false positives by construction):")
-    println(
-        "  full solver (stalls<=2, walk portfolio): CERT %d;  static composite resid=0 passes: %d CERT + %d LOSS".format(
-            Locale.ROOT, fullCert.size,
-            rows.count { it.cls == "CERT" && it.resid == 0 },
-            rows.count { it.cls == "LOSS" && it.resid == 0 },
-        )
-    )
-    println(
-        "  no-stall (stalls=0, walk portfolio):     CERT %-4d = recall %.0f%% of full CERT (busts -> UNCERT: %d)".format(
-            Locale.ROOT,
-            rows.count { it.clsNoStall == "CERT" },
-            fullCert.count { it.clsNoStall == "CERT" } * 100.0 / fullCert.size.coerceAtLeast(1),
-            fullCert.count { it.clsNoStall == "UNCERT" },
-        )
-    )
-    println(
-        "  minimal (stalls=0, single walk):         CERT %-4d = recall %.0f%% of full CERT (busts -> UNCERT: %d)".format(
-            Locale.ROOT,
-            rows.count { it.clsMinimal == "CERT" },
-            fullCert.count { it.clsMinimal == "CERT" } * 100.0 / fullCert.size.coerceAtLeast(1),
-            fullCert.count { it.clsMinimal == "UNCERT" },
-        )
-    )
-    if (sanity > 0) println("  SANITY VIOLATION: $sanity full-LOSS states certified by a weaker player (must be 0)")
+    println("player-freedom ladder (k consecutive reshapes x walk set; engine-exact; baseline = $BASELINE):")
+    println("  rung   CERT   recall  onCert:UNCERT  static composite resid=0 passes: %d CERT + %d LOSS".format(
+        Locale.ROOT,
+        rows.count { it.cls == "CERT" && it.resid == 0 },
+        rows.count { it.cls == "LOSS" && it.resid == 0 },
+    ))
+    for ((name, _, _) in LADDER) {
+        val cert = rows.count { it.ladder.getValue(name) == "CERT" }
+        val recall = baselineCert.count { it.ladder.getValue(name) == "CERT" } * 100.0 / baselineCert.size.coerceAtLeast(1)
+        val uncert = baselineCert.count { it.ladder.getValue(name) == "UNCERT" }
+        println("  %-6s %-6d %5.1f%%  %d".format(Locale.ROOT, name, cert, recall, uncert))
+    }
+    val sanity = rows.count { row ->
+        row.cls == "LOSS" && LADDER.any { (name, stalls, _) -> stalls <= 2 && row.ladder.getValue(name) == "CERT" }
+    }
+    if (sanity > 0) println("  SANITY VIOLATION: $sanity baseline-LOSS states certified by a weaker player (must be 0)")
+    val upgrades = rows.count { it.cls != "CERT" && it.ladder.getValue("s3wP") == "CERT" }
+    println("  saturation: s3wP certifies $upgrades states beyond baseline (0 = hierarchy saturated at k=2)")
 
     val v1Violations = rows.filter { it.cls == "CERT" && it.g - it.coverU >= 2 }
     val v1Explained = v1Violations.count { it.resid <= 1 }
