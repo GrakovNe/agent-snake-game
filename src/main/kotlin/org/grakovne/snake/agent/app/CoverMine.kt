@@ -54,6 +54,8 @@ private class Row(
     val value: Double,
     val coverU: Int,
     val coverA: Int,
+    val resid: Int,
+    val wCount: Int,
     val finalScore: Int,
     val body: List<Position>,
     val food: Position,
@@ -76,11 +78,14 @@ fun main() {
     /**
      * Exact max free cells coverable by one simple path over free cells, with
      * start restricted to [anchors] (bitset over free-cell ids) or unrestricted
-     * when anchors == -1. Bitmask DP over (visited set, last).
+     * when anchors == -1. Bitmask DP over (visited set, last); [reachable] keeps
+     * every achievable (visited set, endpoints) pair for the composite check.
      */
-    fun maxCoverage(freeCells: List<Int>, adjacency: IntArray, anchors: Int): Int {
+    class CoverageDp(val best: Int, val reachable: IntArray)
+
+    fun coverageDp(freeCells: List<Int>, adjacency: IntArray, anchors: Int): CoverageDp {
         val g = freeCells.size
-        if (g == 0 || anchors == 0) return 0
+        if (g == 0 || anchors == 0) return CoverageDp(0, IntArray(1))
         val reachable = IntArray(1 shl g)
         val seedMask = if (anchors == -1) (1 shl g) - 1 else anchors
         var i = seedMask
@@ -95,7 +100,6 @@ fun main() {
             if (lasts == 0) continue
             val count = Integer.bitCount(mask)
             if (count > best) best = count
-            if (count == g) break
             while (lasts != 0) {
                 val last = Integer.numberOfTrailingZeros(lasts)
                 lasts = lasts and (lasts - 1)
@@ -108,7 +112,47 @@ fun main() {
                 }
             }
         }
-        return best
+        return CoverageDp(best, reachable)
+    }
+
+    /**
+     * Lemma-2 window digestibility per free cell, frozen-loop approximation:
+     * wall position p = ticks until the tail vacates the cell (L-1-indexFromHead),
+     * window W(p) = [p, p+g) mod L; a hole is digestible iff some ordered wall
+     * pair (i, j) has W(p_i) intersecting W(p_j - 2). Returns a bitset over
+     * free-cell ids.
+     */
+    fun digestibleMask(freeCells: List<Int>, body: List<Position>): Int {
+        val bodyLength = body.size
+        val g = freeCells.size
+        val posOf = HashMap<Int, Int>(bodyLength * 2)
+        body.forEachIndexed { idx, p -> posOf[p.y * size + p.x] = bodyLength - 1 - idx }
+        var mask = 0
+        freeCells.forEachIndexed { i, c ->
+            val x = c % size
+            val y = c / size
+            val walls = ArrayList<Int>(4)
+            if (x > 0) posOf[c - 1]?.let { walls.add(it) }
+            if (x < size - 1) posOf[c + 1]?.let { walls.add(it) }
+            if (y > 0) posOf[c - size]?.let { walls.add(it) }
+            if (y < size - 1) posOf[c + size]?.let { walls.add(it) }
+            var ok = false
+            outer@ for (a in walls) {
+                for (b in walls) {
+                    if (a == b) continue
+                    val s1 = a
+                    val s2 = ((b - 2) % bodyLength + bodyLength) % bodyLength
+                    val d1 = ((s1 - s2) % bodyLength + bodyLength) % bodyLength
+                    val d2 = ((s2 - s1) % bodyLength + bodyLength) % bodyLength
+                    if (d1 < g || d2 < g) {
+                        ok = true
+                        break@outer
+                    }
+                }
+            }
+            if (ok) mask = mask or (1 shl i)
+        }
+        return mask
     }
 
     fun freeGraph(occupied: BooleanArray): Pair<List<Int>, IntArray> {
@@ -170,11 +214,22 @@ fun main() {
         val occupied = BooleanArray(area)
         for (p in state.body) occupied[p.y * size + p.x] = true
         val (freeCells, adjacency) = freeGraph(occupied)
-        val coverU = maxCoverage(freeCells, adjacency, anchors = -1)
-        val coverA = maxCoverage(freeCells, adjacency, headAnchors(freeCells, state.body.first()))
+        val unanchored = coverageDp(freeCells, adjacency, anchors = -1)
+        val anchored = coverageDp(freeCells, adjacency, headAnchors(freeCells, state.body.first()))
+        val digestible = digestibleMask(freeCells, state.body)
+        // composite residual: min over achievable paths (incl. the empty one) of
+        // cells that are neither on the path nor window-digestible
+        val full = (1 shl freeCells.size) - 1
+        var resid = Integer.bitCount(full and digestible.inv())
+        for (mask in 1..full) {
+            if (unanchored.reachable[mask] == 0) continue
+            val r = Integer.bitCount(full and mask.inv() and digestible.inv())
+            if (r < resid) resid = r
+        }
         return Row(
             state.seed, area - state.body.size, cls, plan?.value ?: 0.0,
-            coverU, coverA, state.finalScore, state.body, state.food,
+            unanchored.best, anchored.best, resid, Integer.bitCount(digestible),
+            state.finalScore, state.body, state.food,
         )
     }
 
@@ -209,14 +264,15 @@ fun main() {
     File(out).parentFile?.mkdirs()
     File(out).writeText(
         rows.joinToString("") { r ->
-            "${r.seed} ${r.g} ${r.cls} %.4f ${r.coverU} ${r.coverA} ${r.finalScore}\n".format(Locale.ROOT, r.value)
+            "${r.seed} ${r.g} ${r.cls} %.4f ${r.coverU} ${r.coverA} ${r.resid} ${r.wCount} ${r.finalScore}\n"
+                .format(Locale.ROOT, r.value)
         }
     )
 
     println("mined ${rows.size} states from $games games, time %.1fs, wrote $out".format(Locale.ROOT, elapsed))
     println(EndgameSolver.statsLine())
     println()
-    println("class   n      gapU=0  gapU<=1 gapU>=2 meanGapU maxGapU meanGapA")
+    println("class   n      gapU<=1 resid=0 resid<=1 resid>=2 meanResid maxResid meanW")
     for (cls in listOf("CERT", "LOSS", "UNCERT")) {
         val sub = rows.filter { it.cls == cls }
         if (sub.isEmpty()) {
@@ -224,26 +280,34 @@ fun main() {
             continue
         }
         val gaps = sub.map { it.g - it.coverU }
+        val resids = sub.map { it.resid }
         println(
-            "%-7s %-6d %5.1f%%  %5.1f%%  %5.1f%%  %6.2f   %-7d %.2f".format(
+            "%-7s %-6d %5.1f%%  %5.1f%%  %5.1f%%   %5.1f%%   %6.2f    %-8d %.2f".format(
                 Locale.ROOT, cls, sub.size,
-                gaps.count { it == 0 } * 100.0 / sub.size,
                 gaps.count { it <= 1 } * 100.0 / sub.size,
-                gaps.count { it >= 2 } * 100.0 / sub.size,
-                gaps.average(),
-                gaps.max(),
-                sub.map { (it.g - it.coverA).toDouble() }.average(),
+                resids.count { it == 0 } * 100.0 / sub.size,
+                resids.count { it <= 1 } * 100.0 / sub.size,
+                resids.count { it >= 2 } * 100.0 / sub.size,
+                resids.average(),
+                resids.max(),
+                sub.map { it.wCount.toDouble() }.average(),
             )
         )
     }
-    val violations = rows.filter { it.cls == "CERT" && it.g - it.coverU >= 2 }
+    val v1Violations = rows.filter { it.cls == "CERT" && it.g - it.coverU >= 2 }
+    val v1Explained = v1Violations.count { it.resid <= 1 }
+    val v2Violations = rows.filter { it.cls == "CERT" && it.resid >= 2 }
     println()
-    if (violations.isEmpty()) {
-        println("FALSIFICATION TEST: 0 certified states with gapU >= 2 — conjecture 'Solved => coverage' SURVIVES")
+    println("v1 violators (CERT, gapU >= 2): ${v1Violations.size}, of them explained by windows (resid <= 1): $v1Explained")
+    if (v2Violations.isEmpty()) {
+        println("FALSIFICATION TEST v2: 0 certified states with resid >= 2 — composite conjecture 'Solved => path + windows' SURVIVES")
     } else {
-        println("FALSIFICATION TEST: ${violations.size} certified states with gapU >= 2 — conjecture FALSIFIED")
-        for (v in violations.take(5)) {
-            println("seed=${v.seed} g=${v.g} coverU=${v.coverU} coverA=${v.coverA} value=%.4f".format(Locale.ROOT, v.value))
+        println("FALSIFICATION TEST v2: ${v2Violations.size} certified states with resid >= 2 — composite conjecture FALSIFIED")
+        for (v in v2Violations.take(5)) {
+            println(
+                "seed=${v.seed} g=${v.g} coverU=${v.coverU} resid=${v.resid} W=${v.wCount} value=%.4f"
+                    .format(Locale.ROOT, v.value)
+            )
             println(render(v))
         }
     }
