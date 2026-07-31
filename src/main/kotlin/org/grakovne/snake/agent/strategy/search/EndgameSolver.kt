@@ -24,6 +24,10 @@ class EndgameSolver(
     private val height: Int,
     private val starvationLimit: Int,
     private val nodeBudget: Int = 150_000,
+    /** Reshaping freedom: how many stall laps in a row the player may take. */
+    private val maxStalls: Int = MAX_STALLS,
+    /** Walk freedom: full portfolio of eating walks, or the single canonical one. */
+    private val walkPortfolio: Boolean = true,
 ) {
 
 
@@ -70,7 +74,7 @@ class EndgameSolver(
         var best: Plan? = null
         for ((walk, post) in expand(cells, foodIdx)) {
             val value = try {
-                postValue(post, MAX_STALLS)
+                postValue(post, maxStalls)
             } catch (_: Budget) {
                 lastExact = false
                 budget = nodeBudget / 4
@@ -78,9 +82,9 @@ class EndgameSolver(
             }
             if (value > (best?.value ?: -1.0)) best = Plan(walk, value, isStall = false)
         }
-        for ((walk, post) in stallMoves(cells, foodIdx)) {
+        if (maxStalls > 0) for ((walk, post) in stallMoves(cells, foodIdx)) {
             val value = try {
-                value(post, foodIdx, MAX_STALLS - 1)
+                value(post, foodIdx, maxStalls - 1)
             } catch (_: Budget) {
                 lastExact = false
                 budget = nodeBudget / 4
@@ -126,7 +130,7 @@ class EndgameSolver(
         memo[key]?.let { return it }
         var best = 0.0
         for ((_, post) in expand(bodyCells, foodIdx)) {
-            val v = postValue(post, MAX_STALLS)
+            val v = postValue(post, maxStalls)
             if (v > best) {
                 best = v
                 if (best >= 1.0 - 1e-9) break
@@ -189,6 +193,7 @@ class EndgameSolver(
             if (p.size < 2 || p.size - 1 > starvationLimit) continue
             if (!seen.add(p.contentHashCode())) continue
             out.add(p to board.bodyAfterEating(body, p))
+            if (!walkPortfolio) break
         }
         return out
     }

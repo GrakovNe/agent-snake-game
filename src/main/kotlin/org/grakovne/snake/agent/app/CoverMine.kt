@@ -51,6 +51,8 @@ private class Row(
     val seed: Long,
     val g: Int,
     val cls: String,
+    val clsNoStall: String,
+    val clsMinimal: String,
     val value: Double,
     val coverU: Int,
     val coverA: Int,
@@ -204,13 +206,21 @@ fun main() {
         return snapshots.map { MinedState(it.seed, it.eatIndex, it.body, it.food, finalScore) }
     }
 
-    fun classify(state: MinedState, solver: EndgameSolver): Row {
+    fun classifyOne(state: MinedState, solver: EndgameSolver): Pair<String, Double> {
         val plan = solver.solve(state.body, state.food)
         val cls = when {
             plan != null && plan.value >= 1.0 - 1e-9 && solver.lastExact -> "CERT"
             plan == null && solver.lastExact -> "LOSS"
             else -> "UNCERT"
         }
+        return cls to (plan?.value ?: 0.0)
+    }
+
+    fun classify(state: MinedState, full: EndgameSolver, noStall: EndgameSolver, minimal: EndgameSolver): Row {
+        val (cls, value) = classifyOne(state, full)
+        // the player-freedom ladder: reshaping off, then walk portfolio off too
+        val clsNoStall = classifyOne(state, noStall).first
+        val clsMinimal = classifyOne(state, minimal).first
         val occupied = BooleanArray(area)
         for (p in state.body) occupied[p.y * size + p.x] = true
         val (freeCells, adjacency) = freeGraph(occupied)
@@ -227,7 +237,7 @@ fun main() {
             if (r < resid) resid = r
         }
         return Row(
-            state.seed, area - state.body.size, cls, plan?.value ?: 0.0,
+            state.seed, area - state.body.size, cls, clsNoStall, clsMinimal, value,
             unanchored.best, anchored.best, resid, Integer.bitCount(digestible),
             state.finalScore, state.body, state.food,
         )
@@ -250,12 +260,11 @@ fun main() {
             async(Dispatchers.Default.limitedParallelism(parallelism)) {
                 val states = mineGame(seedFrom + i)
                 if (states.isEmpty()) return@async emptyList<Row>()
-                val solver = EndgameSolver(
-                    size, size,
-                    starvationLimit = size * size * 2,
-                    nodeBudget = solverBudget,
-                )
-                states.map { classify(it, solver) }
+                val starve = size * size * 2
+                val full = EndgameSolver(size, size, starve, solverBudget)
+                val noStall = EndgameSolver(size, size, starve, solverBudget, maxStalls = 0)
+                val minimal = EndgameSolver(size, size, starve, solverBudget, maxStalls = 0, walkPortfolio = false)
+                states.map { classify(it, full, noStall, minimal) }
             }
         }.awaitAll()
     }.flatten()
@@ -264,7 +273,7 @@ fun main() {
     File(out).parentFile?.mkdirs()
     File(out).writeText(
         rows.joinToString("") { r ->
-            "${r.seed} ${r.g} ${r.cls} %.4f ${r.coverU} ${r.coverA} ${r.resid} ${r.wCount} ${r.finalScore}\n"
+            "${r.seed} ${r.g} ${r.cls} ${r.clsNoStall} ${r.clsMinimal} %.4f ${r.coverU} ${r.coverA} ${r.resid} ${r.wCount} ${r.finalScore}\n"
                 .format(Locale.ROOT, r.value)
         }
     )
@@ -294,6 +303,35 @@ fun main() {
             )
         )
     }
+    val fullCert = rows.filter { it.cls == "CERT" }
+    val sanity = rows.count { it.cls == "LOSS" && (it.clsNoStall == "CERT" || it.clsMinimal == "CERT") }
+    println()
+    println("player-freedom ladder (order-aware certificates, engine-exact, zero false positives by construction):")
+    println(
+        "  full solver (stalls<=2, walk portfolio): CERT %d;  static composite resid=0 passes: %d CERT + %d LOSS".format(
+            Locale.ROOT, fullCert.size,
+            rows.count { it.cls == "CERT" && it.resid == 0 },
+            rows.count { it.cls == "LOSS" && it.resid == 0 },
+        )
+    )
+    println(
+        "  no-stall (stalls=0, walk portfolio):     CERT %-4d = recall %.0f%% of full CERT (busts -> UNCERT: %d)".format(
+            Locale.ROOT,
+            rows.count { it.clsNoStall == "CERT" },
+            fullCert.count { it.clsNoStall == "CERT" } * 100.0 / fullCert.size.coerceAtLeast(1),
+            fullCert.count { it.clsNoStall == "UNCERT" },
+        )
+    )
+    println(
+        "  minimal (stalls=0, single walk):         CERT %-4d = recall %.0f%% of full CERT (busts -> UNCERT: %d)".format(
+            Locale.ROOT,
+            rows.count { it.clsMinimal == "CERT" },
+            fullCert.count { it.clsMinimal == "CERT" } * 100.0 / fullCert.size.coerceAtLeast(1),
+            fullCert.count { it.clsMinimal == "UNCERT" },
+        )
+    )
+    if (sanity > 0) println("  SANITY VIOLATION: $sanity full-LOSS states certified by a weaker player (must be 0)")
+
     val v1Violations = rows.filter { it.cls == "CERT" && it.g - it.coverU >= 2 }
     val v1Explained = v1Violations.count { it.resid <= 1 }
     val v2Violations = rows.filter { it.cls == "CERT" && it.resid >= 2 }
